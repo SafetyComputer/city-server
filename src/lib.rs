@@ -1,5 +1,5 @@
-use actix_session::{Session};
-use actix_web::{HttpResponse, Responder, get, post, web};
+use actix_identity::Identity;
+use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, get, post, web};
 use diesel::{
     ExpressionMethods, PgConnection, RunQueryDsl, insert_into,
     query_dsl::methods::FilterDsl,
@@ -51,50 +51,46 @@ impl UserPost {
     }
 }
 
-const SESSION_USER_KEY: &str = "user_info";
 #[post("/login")]
 async fn login(
-    session: Session,
+    request: HttpRequest,
+    user: Option<Identity>,
     db: web::Data<Dbpool>,
-    login_info: web::Query<UserPost>,
-) -> impl Responder {
-    use schema::users::dsl::*;
-    match session.get::<String>(SESSION_USER_KEY) {
-        Ok(Some(user_info)) if user_info == login_info.username => {
-            HttpResponse::Ok().json(AjaxResult::<bool>::fail("already logged in".to_string()))
+    user_info: web::Query<UserPost>,
+) -> HttpResponse {
+    match user {
+        Some(_) => {
+            return HttpResponse::Unauthorized()
+                .json(AjaxResult::<bool>::fail("already logged in".to_string()));
         }
-        _ => {
-            println!("login now");
+        None => {
+            use schema::users::dsl::*;
             let conn = &mut db.get_connection();
             let result: Vec<User> = users
-                .filter(username.eq(&login_info.username))
-                .filter(password.eq(&login_info.password))
+                .filter(username.eq(&user_info.username))
+                .filter(password.eq(&user_info.password))
                 .load(conn)
                 .expect("db error");
-            if !result.is_empty() {
-                session
-                    .insert::<String>(SESSION_USER_KEY, login_info.username.clone())
-                    .unwrap();
-                HttpResponse::Ok().json(AjaxResult::<bool>::success_without_data())
+            if result.is_empty() {
+                HttpResponse::Unauthorized()
+                    .json(AjaxResult::<bool>::fail("login info error".to_string()))
             } else {
-                HttpResponse::Forbidden().json(AjaxResult::<bool>::fail(
-                    "password must match username".to_string(),
-                ))
+                Identity::login(&request.extensions(), user_info.username.clone().into()).unwrap();
+                HttpResponse::Ok().json(AjaxResult::<bool>::success_without_data())
             }
         }
     }
 }
 
-#[get("logout")]
-async fn logout(session: Session) -> impl Responder {
-    match session.get::<String>(SESSION_USER_KEY) {
-        Ok(Some(_)) => {
-            session.clear();
+#[post("/logout")]
+async fn logout(user: Option<Identity>) -> impl Responder {
+    match user {
+        Some(user) => {
+            user.logout();
             HttpResponse::Ok().json(AjaxResult::<bool>::success_without_data())
         }
-        _ => {
-            HttpResponse::Ok().json(AjaxResult::<bool>::fail("haven't logged in".to_string()))
-        }
+        None => HttpResponse::Unauthorized()
+            .json(AjaxResult::<bool>::fail("haven't logged in".to_string())),
     }
 }
 
