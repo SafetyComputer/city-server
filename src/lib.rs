@@ -1,7 +1,11 @@
+use actix_session::{Session};
+use actix_web::{HttpResponse, Responder, get, post, web};
+use diesel::{
+    ExpressionMethods, PgConnection, RunQueryDsl, insert_into,
+    query_dsl::methods::FilterDsl,
+    r2d2::{ConnectionManager, Pool, PooledConnection},
+};
 use serde::{Deserialize, Serialize};
-use actix_web::{post, web, Responder, HttpResponse};
-use actix_session::Session;
-use diesel::{insert_into, query_dsl::methods::FilterDsl, r2d2::{ConnectionManager, Pool, PooledConnection}, update, ExpressionMethods, PgConnection, RunQueryDsl};
 
 pub mod models;
 pub mod schema;
@@ -16,10 +20,10 @@ pub struct Dbpool {
 impl Dbpool {
     pub fn from(database_url: &str) -> Dbpool {
         let manager = ConnectionManager::<PgConnection>::new(database_url);
-        let pool = Pool::builder().build(manager).expect("unable to connect to database");
-        Dbpool {
-            pool
-        }
+        let pool = Pool::builder()
+            .build(manager)
+            .expect("unable to connect to database");
+        Dbpool { pool }
     }
     pub fn get_connection(&self) -> PooledConnection<ConnectionManager<PgConnection>> {
         self.pool.get().expect("unable to connect to database")
@@ -28,9 +32,9 @@ impl Dbpool {
 
 #[derive(Deserialize)]
 struct UserPost {
-   username: String,
-   password: String,
-   elo: Option<i32>
+    username: String,
+    password: String,
+    elo: Option<i32>,
 }
 
 impl UserPost {
@@ -41,39 +45,82 @@ impl UserPost {
             password: self.password,
             elo: match self.elo {
                 None => 1000,
-                Some(s) => s
-            }
+                Some(s) => s,
+            },
         }
     }
 }
 
 const SESSION_USER_KEY: &str = "user_info";
 #[post("/login")]
-async fn login(session: Session, db: web::Data<Dbpool>, login_info: web::Query<UserPost>) -> impl Responder {
+async fn login(
+    session: Session,
+    db: web::Data<Dbpool>,
+    login_info: web::Query<UserPost>,
+) -> impl Responder {
     use schema::users::dsl::*;
     match session.get::<String>(SESSION_USER_KEY) {
         Ok(Some(user_info)) if user_info == login_info.username => {
-            println!("already logged in");
-            HttpResponse::Ok().json(AjaxResult::<bool>::success_without_data())
+            HttpResponse::Ok().json(AjaxResult::<bool>::fail("already logged in".to_string()))
         }
         _ => {
             println!("login now");
             let conn = &mut db.get_connection();
-            let result: Vec<User> = users.filter(username.eq(&login_info.username)).filter(password.eq(&login_info.password)).load(conn).expect("db error");
+            let result: Vec<User> = users
+                .filter(username.eq(&login_info.username))
+                .filter(password.eq(&login_info.password))
+                .load(conn)
+                .expect("db error");
             if !result.is_empty() {
-                session.insert::<String>(SESSION_USER_KEY, login_info.username.clone()).unwrap();
+                session
+                    .insert::<String>(SESSION_USER_KEY, login_info.username.clone())
+                    .unwrap();
                 HttpResponse::Ok().json(AjaxResult::<bool>::success_without_data())
             } else {
-                HttpResponse::Forbidden().json(AjaxResult::<bool>::fail("password must match username".to_string()))
+                HttpResponse::Forbidden().json(AjaxResult::<bool>::fail(
+                    "password must match username".to_string(),
+                ))
             }
         }
     }
 }
 
+#[get("logout")]
+async fn logout(session: Session) -> impl Responder {
+    match session.get::<String>(SESSION_USER_KEY) {
+        Ok(Some(_)) => {
+            session.clear();
+            HttpResponse::Ok().json(AjaxResult::<bool>::success_without_data())
+        }
+        _ => {
+            HttpResponse::Ok().json(AjaxResult::<bool>::fail("haven't logged in".to_string()))
+        }
+    }
+}
 
+#[post("/user")]
+async fn post_user(db: web::Data<Dbpool>, user_info: web::Query<UserPost>) -> impl Responder {
+    use schema::users::dsl::*;
+    let conn = &mut db.get_connection();
+    let result: Vec<User> = users
+        .filter(username.eq(&user_info.username))
+        .load(conn)
+        .expect("db error");
+    if result.is_empty() {
+        let new_user = user_info.into_inner().to_user();
+        let result = insert_into(users).values(&new_user).execute(conn);
+        match result {
+            Ok(_) => HttpResponse::Ok().json(AjaxResult::<bool>::success_without_data()),
+            Err(_) => HttpResponse::InternalServerError().json(AjaxResult::<bool>::fail(
+                "server database error".to_string(),
+            )),
+        }
+    } else {
+        HttpResponse::Forbidden().json(AjaxResult::<bool>::fail("user already exist".to_string()))
+    }
+}
 
-#[derive(Deserialize)]
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
 pub struct AjaxResult<T> {
     msg: String,
     data: Option<Vec<T>>,
@@ -81,29 +128,24 @@ pub struct AjaxResult<T> {
 
 const MSG_SUCCESS: &str = "success";
 impl<T> AjaxResult<T> {
-
-    pub fn success(data_opt: Option<Vec<T>>) -> Self{
-         Self {
-             msg: MSG_SUCCESS.to_string(),
-             data: data_opt
-         }
+    pub fn success(data_opt: Option<Vec<T>>) -> Self {
+        Self {
+            msg: MSG_SUCCESS.to_string(),
+            data: data_opt,
+        }
     }
 
     pub fn success_without_data() -> Self {
         Self::success(Option::None)
     }
-    pub fn success_with_single(single: T) -> Self{
+    pub fn success_with_single(single: T) -> Self {
         Self {
-            msg:  MSG_SUCCESS.to_string(),
-            data: Option::Some(vec![single])
+            msg: MSG_SUCCESS.to_string(),
+            data: Option::Some(vec![single]),
         }
     }
 
     pub fn fail(msg: String) -> Self {
-        Self {
-            msg,
-            data: None
-        }
+        Self { msg, data: None }
     }
-
 }
