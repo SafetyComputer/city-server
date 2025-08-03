@@ -87,7 +87,7 @@ impl Board<Cell> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Serialize)]
+#[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Direction {
     Up = 0,
     Down = 1,
@@ -125,7 +125,7 @@ impl fmt::Debug for Direction {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Coordinate {
     pub x: i32,
     pub y: i32,
@@ -174,7 +174,7 @@ impl Add<Coordinate> for Coordinate {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Serialize)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Move {
     pub destination: Coordinate,
     pub place_wall: Direction,

@@ -2,13 +2,20 @@ use std::time::{Duration, Instant};
 
 use actix_ws::AggregatedMessage;
 use futures_util::StreamExt as _;
+use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::interval};
 
-use crate::match_server::MatchServerHandle;
+use crate::{game::Move, match_server::MatchServerHandle};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Deserialize, Serialize)]
+pub struct Message {
+    command: String,
+    data: String,
+}
 
 pub async fn match_ws(
     match_server: MatchServerHandle,
@@ -17,7 +24,7 @@ pub async fn match_ws(
     msg_stream: actix_ws::MessageStream,
 ) {
     let uuid = user.id.unwrap();
-    let mut name: String = user.username;
+    let name: String = user.username;
     let mut last_heartbeat = Instant::now();
     let mut interval = interval(HEARTBEAT_INTERVAL);
 
@@ -45,7 +52,7 @@ pub async fn match_ws(
                     }
 
                     AggregatedMessage::Text(text) => {
-                        process_text_msg(&match_server, &mut session, &text, uuid, &mut name)
+                        process_text_msg(&match_server, &mut session, &text, uuid, &name)
                             .await;
                     }
 
@@ -83,14 +90,34 @@ async fn process_text_msg(
     session: &mut actix_ws::Session,
     text: &str,
     conn: i32,
-    name: &mut String,
+    name: &String,
 ) {
     let msg = text.trim();
-    if msg.starts_with('/') {
-    } else {
-        let msg = format!("{name}: {msg}");
+    if let Ok(msg) = serde_json::from_str::<Message>(msg) {
+        match msg.command.as_str() {
+            "Message" => {
+                let msg = format!("{name}: {}", msg.data);
 
-        match_server.send_message(conn, msg).await;
-        let _ = session.text("success".to_string()).await;
+                match_server.send_message(conn, msg).await;
+                let _ = session.text("success".to_string()).await;
+            }
+            "StartMatching" => {
+                match_server.start_matching(conn).await;
+            }
+            "Move" => {
+                let mv = Move::from_notation(msg.data.as_str());
+                match mv {
+                    Ok(_) => {}
+                    Err(_) => {
+                        let _ = session.text("invalid move notion".to_string()).await;
+                    }
+                }
+            }
+            _ => {
+                let _ = session.text("no such command".to_string()).await;
+            }
+        }
+    } else {
+        let _ = session.text("invalid message".to_string()).await;
     }
 }

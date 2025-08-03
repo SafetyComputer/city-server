@@ -1,14 +1,10 @@
 use actix_identity::IdentityMiddleware;
 use actix_session::{SessionMiddleware, config::PersistentSession, storage::CookieSessionStore};
-use actix_web::{
-    App, HttpServer,
-    cookie::{Key, time::Duration},
-    web,
-};
-use city_server::match_server::MatchServer;
+use actix_web::{App, HttpServer, cookie::Key, web};
+use city_server::match_server::{BackgroundTask, MatchServer};
 use dotenvy::dotenv;
 use futures_util::try_join;
-use std::env;
+use std::{env, io};
 fn get_secret_key() -> Key {
     dotenv().ok();
     let key_raw = env::var("KEY").unwrap();
@@ -27,7 +23,20 @@ async fn main() -> std::io::Result<()> {
     let pool = city_server::Dbpool::from(&database_url);
     let key = get_secret_key();
     let (match_server, server_tx) = MatchServer::new();
+    let background_tx = server_tx.clone();
     let match_server = tokio::task::spawn(match_server.run());
+    let match_server_background = tokio::task::spawn(async move {
+        let mut interval = tokio::time::interval(core::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let result = background_tx.schedule_background_task(BackgroundTask::MatchPlayers);
+            match result {
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        };
+        return io::Result::<()>::Err(io::Error::new(io::ErrorKind::AddrNotAvailable, "closed connection"));
+    });
     let http_server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))
@@ -37,7 +46,10 @@ async fn main() -> std::io::Result<()> {
                 SessionMiddleware::builder(CookieSessionStore::default(), key.clone())
                     .cookie_name("auth".to_owned())
                     .cookie_secure(false)
-                    .session_lifecycle(PersistentSession::default().session_ttl(Duration::hours(3)))
+                    .session_lifecycle(
+                        PersistentSession::default()
+                            .session_ttl(actix_web::cookie::time::Duration::hours(3)),
+                    )
                     .build(),
             )
             .service(city_server::login)
@@ -46,8 +58,12 @@ async fn main() -> std::io::Result<()> {
             .service(city_server::get_user)
             .service(city_server::match_ws)
     })
-    .bind("127.0.0.1:8088")?
+    .bind("0.0.0.0:8088")?
     .run();
-    try_join!(http_server, async move { match_server.await.unwrap() })?;
+    try_join!(
+        http_server,
+        async move { match_server.await.unwrap() },
+        async move { match_server_background.await.unwrap() }
+    )?;
     Ok(())
 }
