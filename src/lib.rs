@@ -8,8 +8,13 @@ use serde::Deserialize;
 
 pub mod models;
 pub mod schema;
+pub mod match_server;
+pub mod game;
+pub mod handler;
 
 use models::*;
+
+use crate::match_server::MatchServerHandle;
 
 #[derive(Clone)]
 pub struct Dbpool {
@@ -56,7 +61,7 @@ impl UserPost {
     }
 }
 
-async fn idnetity_to_user(
+async fn identity_to_user(
     identity: Identity,
     db: web::Data<Dbpool>,
 ) -> Result<User, diesel::result::Error> {
@@ -148,4 +153,24 @@ async fn post_user(db: web::Data<Dbpool>, user_info: web::Query<UserPost>) -> im
     } else {
         HttpResponse::Forbidden().json("user already exist")
     }
+}
+
+#[get("/ws")]
+async fn match_ws(
+    req: HttpRequest,
+    stream: web::Payload,
+    match_server: web::Data<MatchServerHandle>,
+    db: web::Data<Dbpool>,
+    identity: Identity
+) -> Result<HttpResponse, actix_web::Error> {
+    let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
+    let user = identity_to_user(identity, db).await.unwrap();
+    tokio::task::spawn_local(handler::match_ws(
+        (**match_server).clone(),
+        user,
+        session,
+        msg_stream,
+    ));
+
+    Ok(res)
 }

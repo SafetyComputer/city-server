@@ -5,7 +5,9 @@ use actix_web::{
     cookie::{Key, time::Duration},
     web,
 };
+use city_server::match_server::MatchServer;
 use dotenvy::dotenv;
+use futures_util::try_join;
 use std::env;
 fn get_secret_key() -> Key {
     dotenv().ok();
@@ -18,31 +20,34 @@ fn get_secret_key() -> Key {
     }
     Key::from(&key)
 }
-#[actix_rt::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").unwrap();
     let pool = city_server::Dbpool::from(&database_url);
     let key = get_secret_key();
-    HttpServer::new(move || {
+    let (match_server, server_tx) = MatchServer::new();
+    let match_server = tokio::task::spawn(match_server.run());
+    let http_server = HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))
+            .app_data(web::Data::new(server_tx.clone()))
             .wrap(IdentityMiddleware::default())
             .wrap(
                 SessionMiddleware::builder(CookieSessionStore::default(), key.clone())
                     .cookie_name("auth".to_owned())
                     .cookie_secure(false)
-                    .session_lifecycle(
-                        PersistentSession::default().session_ttl(Duration::hours(3)),
-                    )
+                    .session_lifecycle(PersistentSession::default().session_ttl(Duration::hours(3)))
                     .build(),
             )
             .service(city_server::login)
             .service(city_server::logout)
             .service(city_server::post_user)
             .service(city_server::get_user)
+            .service(city_server::match_ws)
     })
     .bind("127.0.0.1:8088")?
-    .run()
-    .await
+    .run();
+    try_join!(http_server, async move { match_server.await.unwrap() })?;
+    Ok(())
 }
