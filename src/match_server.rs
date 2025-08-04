@@ -3,8 +3,10 @@ use std::{
     io,
 };
 
-use tokio::sync::{mpsc, oneshot};
 use rand::Rng;
+use tokio::sync::{mpsc, oneshot};
+
+use crate::game::{Game, Move};
 
 enum Color {
     Blue,
@@ -14,25 +16,138 @@ enum Color {
 pub enum BackgroundTask {
     MatchPlayers,
     CheckConnections,
+    CheckMatches,
 }
 struct Players {
-    blue: i32,
-    green: i32,
+    blue: Option<i32>,
+    green: Option<i32>,
 }
 
 impl Players {
     fn get_color(&self, id: i32) -> Option<Color> {
-        if self.blue == id {
-            Some(Color::Blue)
-        } else if self.green == id {
-            Some(Color::Green)
-        } else {
-            None
+        match self.blue {
+            None => {}
+            Some(blue_id) => {
+                if blue_id == id {
+                    return Some(Color::Blue);
+                }
+            }
         }
+        match self.green {
+            None => {}
+            Some(green_id) => {
+                if green_id == id {
+                    return Some(Color::Green);
+                }
+            }
+        }
+        return None;
     }
 
     fn contains(&self, id: i32) -> bool {
-        (self.blue == id) | (self.green == id)
+        match self.blue {
+            None => {}
+            Some(blue_id) => {
+                if blue_id == id {
+                    return true;
+                }
+            }
+        }
+        match self.green {
+            None => {}
+            Some(green_id) => {
+                if green_id == id {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+}
+
+struct MatchRoom {
+    game: Game,
+    players: Players,
+    viewers: HashSet<i32>,
+}
+
+impl MatchRoom {
+    fn new(blue: Option<i32>, green: Option<i32>) -> Self {
+        let mut viewers = HashSet::with_capacity(2);
+        if let Some(blue_id) = blue {
+            viewers.insert(blue_id);
+        }
+        if let Some(green_id) = green {
+            viewers.insert(green_id);
+        }
+        Self {
+            game: Game::new(7, 7),
+            players: Players { blue, green },
+            viewers,
+        }
+    }
+
+    fn is_player(&self, id: i32) -> bool {
+        self.players.contains(id)
+    }
+
+    fn is_audience(&self, id: i32) -> bool {
+        self.viewers.contains(&id) && !self.is_player(id)
+    }
+
+    fn has_both_player(&self) -> bool {
+        self.players.blue.is_some() && self.players.green.is_some()
+    }
+
+    fn player_join(&mut self, id: i32, color: Option<Color>) -> bool {
+        if self.is_player(id) || self.contains(id) {
+            return false;
+        }
+        match color {
+            Some(Color::Blue) => {
+                if let None = self.players.blue {
+                    self.players.blue = Some(id);
+                    self.viewers.insert(id);
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+            Some(Color::Green) => {
+                if let None = self.players.green {
+                    self.players.green = Some(id);
+                    self.viewers.insert(id);
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+            None => {
+                if let None = self.players.blue {
+                    self.players.blue = Some(id);
+                    self.viewers.insert(id);
+                    return true;
+                }
+                if let None = self.players.green {
+                    self.players.green = Some(id);
+                    self.viewers.insert(id);
+                    return true;
+                }
+                return false;
+            }
+        }
+    }
+
+    fn viewer_join(&mut self, id: i32) -> bool {
+        self.viewers.insert(id)
+    }
+
+    fn contains(&self, id: i32) -> bool {
+        self.viewers.contains(&id)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.players.blue.is_none() && self.players.green.is_none()
     }
 }
 
@@ -45,6 +160,7 @@ enum Command {
 
     Disconnect {
         conn: i32,
+        name: String,
     },
 
     Message {
@@ -56,12 +172,40 @@ enum Command {
     StartMatching {
         conn: i32,
         res_tx: oneshot::Sender<()>,
+    },
+
+    StopMatching {
+        conn: i32,
+        res_tx: oneshot::Sender<()>,
+    },
+
+    Move {
+        mv: Move,
+        conn: i32,
+        res_tx: oneshot::Sender<bool>,
+    },
+
+    PlayerJoin {
+        room: i32,
+        conn: i32,
+        res_tx: oneshot::Sender<bool>,
+    },
+
+    ViewerJoin {
+        room: i32,
+        conn: i32,
+        res_tx: oneshot::Sender<bool>,
+    },
+
+    CreateMatchRoom {
+        conn: i32,
+        res_tx: oneshot::Sender<i32>
     }
 }
 
 pub struct MatchServer {
     sessions: HashMap<i32, mpsc::UnboundedSender<String>>,
-    matches: HashMap<i32, Players>,
+    matches: HashMap<i32, MatchRoom>,
     waitings: HashSet<i32>,
     cmd_rx: mpsc::UnboundedReceiver<Command>,
     task_rx: mpsc::UnboundedReceiver<BackgroundTask>,
@@ -81,33 +225,19 @@ impl MatchServer {
                 cmd_rx,
                 task_rx,
             },
-            MatchServerHandle {
-                cmd_tx,
-                task_tx,
-            },
+            MatchServerHandle { cmd_tx, task_tx },
         )
     }
 
     async fn send_system_message(&self, matc: i32, from: i32, msg: impl Into<String>) {
-        if let Some(players) = self.matches.get(&matc) {
+        if let Some(room) = self.matches.get(&matc) {
             let msg = msg.into();
-
-            if let Some(color) = players.get_color(from) {
-                let other_id: i32;
-                match color {
-                    Color::Blue => other_id = players.green,
-                    Color::Green => other_id = players.blue,
-                }
-
-                if let Some(tx) = self.sessions.get(&other_id) {
-                    let _ = tx.send(msg);
-                }
-            } else {
-                if let Some(tx) = self.sessions.get(&players.blue) {
-                    let _ = tx.send(msg.clone());
-                }
-                if let Some(tx) = self.sessions.get(&players.green) {
-                    let _ = tx.send(msg);
+            for conn_id in &room.viewers {
+                if *conn_id != from {
+                    if let Some(tx) = self.sessions.get(conn_id) {
+                        // errors if client disconnected abruptly and hasn't been timed-out yet
+                        let _ = tx.send(msg.clone());
+                    }
                 }
             }
         }
@@ -117,7 +247,7 @@ impl MatchServer {
         if let Some(matc) = self
             .matches
             .iter()
-            .find_map(|(matc, players)| players.contains(conn).then_some(matc))
+            .find_map(|(matc, room)| room.contains(conn).then_some(matc))
         {
             self.send_system_message(*matc, conn, msg).await;
         }
@@ -131,19 +261,64 @@ impl MatchServer {
         self.waitings.insert(uuid);
     }
 
-    async fn disconnect(&mut self, conn_id: i32) {
-        let mut matches: Vec<i32> = Vec::with_capacity(1);
+    async fn stop_matching(&mut self, uuid: i32) {
+        self.waitings.remove(&uuid);
+    }
+
+    async fn _create_match_room(&mut self, blue: Option<i32>, green: Option<i32>) -> i32 {
+        let mut rng = rand::rng();
+        let match_id = loop {
+            let result: i32 = rng.random();
+            if self.matches.contains_key(&result) {
+                continue;
+            } else {
+                break result;
+            }
+        };
+        self.matches.insert(match_id, MatchRoom::new(blue, green));
+        match_id
+    }
+
+    async fn create_match_room(&mut self, uuid: i32) -> i32 {
+        self.waitings.remove(&uuid);
+        let mut rng = rand::rng();
+        let blue: bool = rng.random();
+        if blue {
+            self._create_match_room(Some(uuid), None).await
+        } else {
+            self._create_match_room(None, Some(uuid)).await
+        }
+    }
+
+    async fn player_join_match_room(&mut self, matc: i32, uuid: i32) -> bool {
+        let room = self.matches.get_mut(&matc);
+        match room {
+            Some(room) => room.player_join(uuid, None),
+            None => return false,
+        }
+    }
+
+    async fn viewer_join_match_room(&mut self, matc: i32, uuid: i32) -> bool {
+        let room = self.matches.get_mut(&matc);
+        match room {
+            Some(room) => room.viewer_join(uuid),
+            None => return false,
+        }
+    }
+
+    async fn disconnect(&mut self, conn_id: i32, name: String) {
+        let mut matches: Vec<i32> = Vec::new();
         self.waitings.remove(&conn_id);
         if self.sessions.remove(&conn_id).is_some() {
-            for (matc, players) in &mut self.matches {
-                if players.contains(conn_id) {
+            for (matc, room) in &mut self.matches {
+                if room.contains(conn_id) {
                     matches.push(*matc);
                 }
             }
         }
 
         for matc in matches {
-            self.send_system_message(matc, conn_id, "opponent has left")
+            self.send_system_message(matc, conn_id, format!("{name} has left"))
                 .await;
         }
     }
@@ -162,8 +337,8 @@ impl MatchServer {
                             let _ = res_tx.send(());
                         }
 
-                        Command::Disconnect { conn } => {
-                            self.disconnect(conn).await;
+                        Command::Disconnect { conn, name } => {
+                            self.disconnect(conn, name).await;
                         }
 
                         Command::Message { msg, conn, res_tx } => {
@@ -175,45 +350,65 @@ impl MatchServer {
                             self.start_matching(conn).await;
                             let _ = res_tx.send(());
                         }
+
+                        Command::StopMatching { conn, res_tx } => {
+                            self.stop_matching(conn).await;
+                            let _ = res_tx.send(());
+                        }
+
+                        Command::PlayerJoin { room, conn, res_tx } => {
+                            let result = self.player_join_match_room(room, conn).await;
+                            let _ = res_tx.send(result);
+                        }
+
+                        Command::ViewerJoin { room, conn, res_tx } => {
+                            let result = self.viewer_join_match_room(room, conn).await;
+                            let _ = res_tx.send(result);
+                        }
+
+                        Command::Move {mv, conn, res_tx} => {},
+
+                        Command::CreateMatchRoom{conn, res_tx} => {
+                            let result = self.create_match_room(conn).await;
+                            let _ = res_tx.send(result);
+                        }
                     }
                 }
-                
+
                 Some(task) = self.task_rx.recv() => {
                     match task {
                         BackgroundTask::MatchPlayers => self.try_match_players().await,
                         BackgroundTask::CheckConnections => self.check_connections().await,
+                        BackgroundTask::CheckMatches => self.check_matches().await
                     }
                 }
             }
         }
     }
+
     async fn try_match_players(&mut self) {
         if self.waitings.len() >= 2 {
-            let players: Vec<i32> = self.waitings.drain().take(2).collect();
-            let mut rng = rand::rng();
-            let match_id = loop {
-                let result: i32 = rng.random();
-                if self.matches.contains_key(&result) {
-                    continue;
-                } else {
-                    break result;
-                }
-            };
-            self.matches.insert(match_id, Players {
-                blue: players[0],
-                green: players[1],
-            });
-            
+            let players: Vec<i32> = self.waitings.drain().take(2).collect(); // maybe bug, not sure
+            let match_id = self
+                ._create_match_room(Some(players[0]), Some(players[1]))
+                .await;
+
             // 通知玩家匹配成功
             if let Some(tx) = self.sessions.get(&players[0]) {
-                let _ = tx.send(format!("MATCHED_WITH {}", players[1]));
+                let _ = tx.send(format!(
+                    "matched with {}, match id {}",
+                    players[1], match_id
+                ));
             }
             if let Some(tx) = self.sessions.get(&players[1]) {
-                let _ = tx.send(format!("MATCHED_WITH {}", players[0]));
+                let _ = tx.send(format!(
+                    "matched with {}, match id {}",
+                    players[0], match_id
+                ));
             }
         }
     }
-    
+
     async fn check_connections(&mut self) {
         let mut dead_connections = Vec::new();
         for (id, tx) in &self.sessions {
@@ -221,9 +416,24 @@ impl MatchServer {
                 dead_connections.push(*id);
             }
         }
-        
+
         for id in dead_connections {
-            self.disconnect(id).await;
+            self.disconnect(id, "anonymous".to_string()).await;
+        }
+    }
+
+    async fn check_matches(&mut self) {
+        let mut empty_rooms = Vec::new();
+
+        for (room_id, room) in &self.matches {
+            if room.is_empty() {
+                empty_rooms.push(*room_id);
+            }
+        }
+
+        for room_id in empty_rooms {
+            self.send_system_message(room_id, -1, "match ended").await;
+            self.matches.remove(&room_id);
         }
     }
 }
@@ -261,17 +471,48 @@ impl MatchServerHandle {
         res_rx.await.unwrap();
     }
 
-    pub fn disconnect(&self, conn: i32) {
-        self.cmd_tx.send(Command::Disconnect { conn }).unwrap();
+    pub fn disconnect(&self, conn: i32, name: String) {
+        self.cmd_tx
+            .send(Command::Disconnect { conn, name })
+            .unwrap();
     }
 
     pub async fn start_matching(&self, conn: i32) {
         let (res_tx, res_rx) = oneshot::channel();
-        self.cmd_tx.send(Command::StartMatching { conn, res_tx }).unwrap();
+        self.cmd_tx
+            .send(Command::StartMatching { conn, res_tx })
+            .unwrap();
         res_rx.await.unwrap();
     }
-    
-    pub fn schedule_background_task(&self, task: BackgroundTask) -> Result<(), tokio::sync::mpsc::error::SendError<BackgroundTask>> {
+
+    pub async fn stop_matching(&self, conn: i32) {
+        let (res_tx, res_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::StopMatching { conn, res_tx })
+            .unwrap();
+        res_rx.await.unwrap();
+    }
+
+    pub async fn viewer_join(&self, room: i32, conn: i32) {
+        let (res_tx, res_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::ViewerJoin { room, conn, res_tx })
+            .unwrap();
+        res_rx.await.unwrap();
+    }
+
+    pub async fn player_join(&self, room: i32, conn: i32) {
+        let (res_tx, res_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::PlayerJoin { room, conn, res_tx })
+            .unwrap();
+        res_rx.await.unwrap();
+    }
+
+    pub fn schedule_background_task(
+        &self,
+        task: BackgroundTask,
+    ) -> Result<(), tokio::sync::mpsc::error::SendError<BackgroundTask>> {
         self.task_tx.send(task)
     }
 }

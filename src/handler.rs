@@ -80,7 +80,7 @@ pub async fn match_ws(
         }
     };
 
-    match_server.disconnect(uuid);
+    match_server.disconnect(uuid, name);
 
     let _ = session.close(close_reason).await;
 }
@@ -101,9 +101,15 @@ async fn process_text_msg(
                 match_server.send_message(conn, msg).await;
                 let _ = session.text("success".to_string()).await;
             }
+
             "StartMatching" => {
                 match_server.start_matching(conn).await;
             }
+
+            "StopMatching" => {
+                match_server.stop_matching(conn).await;
+            }
+
             "Move" => {
                 let mv = Move::from_notation(msg.data.as_str());
                 match mv {
@@ -113,6 +119,7 @@ async fn process_text_msg(
                     }
                 }
             }
+            
             _ => {
                 let _ = session.text("no such command".to_string()).await;
             }
