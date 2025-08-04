@@ -6,11 +6,11 @@ use diesel::{
 };
 use serde::Deserialize;
 
-pub mod models;
-pub mod schema;
-pub mod match_server;
 pub mod game;
 pub mod handler;
+pub mod match_server;
+pub mod models;
+pub mod schema;
 
 use models::*;
 
@@ -118,7 +118,9 @@ async fn logout(identity: Option<Identity>) -> impl Responder {
 async fn get_user(db: web::Data<Dbpool>, user_info: web::Query<UserQuery>) -> impl Responder {
     use schema::users::dsl;
     let conn = &mut db.get_connection();
-    let mut query = dsl::users.select((dsl::id, dsl::username, dsl::elo)).into_boxed();
+    let mut query = dsl::users
+        .select((dsl::id, dsl::username, dsl::elo))
+        .into_boxed();
     if let Some(id) = user_info.id {
         query = query.filter(dsl::id.eq(id));
     }
@@ -161,7 +163,7 @@ async fn match_ws(
     stream: web::Payload,
     match_server: web::Data<MatchServerHandle>,
     db: web::Data<Dbpool>,
-    identity: Identity
+    identity: Identity,
 ) -> Result<HttpResponse, actix_web::Error> {
     let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
     let user = identity_to_user(identity, db).await.unwrap();

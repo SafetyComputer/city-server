@@ -5,7 +5,10 @@ use futures_util::StreamExt as _;
 use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::interval};
 
-use crate::{game::Move, match_server::MatchServerHandle};
+use crate::{
+    game::Move,
+    match_server::{ConnId, MatchServerHandle, RoomId},
+};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -14,8 +17,8 @@ const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Deserialize, Serialize)]
 pub struct Message {
     command: String,
-    room: i32,
-    data: String,
+    room: Option<RoomId>,
+    data: Option<String>,
 }
 
 pub async fn match_ws(
@@ -92,16 +95,18 @@ async fn process_text_msg(
     match_server: &MatchServerHandle,
     session: &mut actix_ws::Session,
     text: &str,
-    conn: i32,
+    conn: ConnId,
     name: &String,
 ) {
     let msg = text.trim();
     if let Ok(msg) = serde_json::from_str::<Message>(msg) {
         match msg.command.as_str() {
             "Message" => {
-                let user_msg = format!("{name}: {}", msg.data);
+                let user_msg = format!("{name}: {}", msg.data.unwrap());
 
-                match_server.send_message(msg.room, conn, user_msg).await;
+                match_server
+                    .send_message(msg.room.unwrap(), conn, user_msg)
+                    .await;
                 let _ = session.text("success".to_string()).await;
             }
 
@@ -114,10 +119,10 @@ async fn process_text_msg(
             }
 
             "Move" => {
-                let mv = Move::from_notation(msg.data.as_str());
+                let mv = Move::from_notation(msg.data.unwrap().as_str());
                 match mv {
                     Ok(mv) => {
-                        let result = match_server.make_move(mv, msg.room, conn).await;
+                        let result = match_server.make_move(mv, msg.room.unwrap(), conn).await;
                         if result {
                             let _ = session.text("success".to_string()).await;
                         } else {
@@ -132,15 +137,17 @@ async fn process_text_msg(
 
             "CreateMatchRoom" => {
                 let room_id = match_server.create_match_room(conn).await;
-                let _ = session.text(format!("created room with id {room_id}")).await;
+                let _ = session
+                    .text(format!("created room with id {room_id}"))
+                    .await;
             }
-            
+
             "PlayerJoin" => {
-                let result = match_server.player_join(msg.room, conn).await;
+                let result = match_server.player_join(msg.room.unwrap(), conn).await;
             }
 
             "ViewerJoin" => {
-                let result = match_server.viewer_join(msg.room, conn).await;
+                let result = match_server.viewer_join(msg.room.unwrap(), conn).await;
             }
             _ => {
                 let _ = session.text("no such command".to_string()).await;

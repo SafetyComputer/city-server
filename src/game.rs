@@ -5,11 +5,9 @@ use std::ops::Add;
 use std::time;
 
 use rand::Rng;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-
-#[derive(Clone, Copy)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 pub enum Cell {
     Empty = 0,
     Blue = 1,
@@ -33,8 +31,7 @@ impl fmt::Debug for Cell {
         }
     }
 }
-#[derive(Clone)]
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Board<T> {
     board_matrix: Vec<Vec<T>>,
 }
@@ -131,7 +128,7 @@ pub struct Coordinate {
     pub y: i32,
 }
 
-impl  Coordinate {
+impl Coordinate {
     pub fn to_tuple(self) -> (i32, i32) {
         (self.x, self.y)
     }
@@ -157,7 +154,6 @@ impl Coordinate {
     // pub fn get_y(&self) -> i32 {
     //     self.y
     // }
-    
 }
 
 impl PartialEq for Coordinate {

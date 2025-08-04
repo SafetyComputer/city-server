@@ -1,10 +1,13 @@
+use std::{env, io};
+
 use actix_identity::IdentityMiddleware;
 use actix_session::{SessionMiddleware, config::PersistentSession, storage::CookieSessionStore};
 use actix_web::{App, HttpServer, cookie::Key, web};
-use city_server::match_server::{BackgroundTask, MatchServer};
 use dotenvy::dotenv;
 use futures_util::try_join;
-use std::{env, io};
+
+use city_server::match_server::{BackgroundTask, MatchServer};
+
 fn get_secret_key() -> Key {
     dotenv().ok();
     let key_raw = env::var("KEY").unwrap();
@@ -16,6 +19,7 @@ fn get_secret_key() -> Key {
     }
     Key::from(&key)
 }
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
@@ -34,8 +38,11 @@ async fn main() -> std::io::Result<()> {
                 Ok(_) => continue,
                 Err(_) => break,
             }
-        };
-        return io::Result::<()>::Err(io::Error::new(io::ErrorKind::AddrNotAvailable, "closed connection"));
+        }
+        return io::Result::<()>::Err(io::Error::new(
+            io::ErrorKind::AddrNotAvailable,
+            "closed connection",
+        ));
     });
     let http_server = HttpServer::new(move || {
         App::new()
