@@ -75,14 +75,14 @@ impl Board<i32> {
     }
 }
 
-impl Board<Cell> {
-    fn to_bool(&self) -> Vec<Vec<bool>> {
-        self.board_matrix
-            .iter()
-            .map(|row| row.iter().map(|&cell| !cell.is_empty()).collect())
-            .collect()
-    }
-}
+// impl Board<Cell> {
+//     fn to_bool(&self) -> Vec<Vec<bool>> {
+//         self.board_matrix
+//             .iter()
+//             .map(|row| row.iter().map(|&cell| !cell.is_empty()).collect())
+//             .collect()
+//     }
+// }
 
 #[derive(Copy, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Direction {
@@ -178,9 +178,6 @@ pub struct Move {
 
 impl Move {
     pub fn from_notation(notation: &str) -> Result<Move, &'static str> {
-        if notation == "exit" {
-            panic!("exit")
-        }
         let x = notation.chars().nth(0).ok_or("Invalid Notation")?;
         let y = notation.chars().nth(1).ok_or("Invalid Notation")?;
         let destination = Coordinate::new(x as i32 - 'a' as i32, y as i32 - '1' as i32);

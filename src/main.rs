@@ -6,7 +6,7 @@ use actix_web::{App, HttpServer, cookie::Key, web};
 use dotenvy::dotenv;
 use futures_util::try_join;
 
-use city_server::match_server::{BackgroundTask, MatchServer};
+use city_server::match_server::{MatchServer, BACKGROUND_TASKS};
 
 fn get_secret_key() -> Key {
     dotenv().ok();
@@ -30,12 +30,13 @@ async fn main() -> std::io::Result<()> {
     let background_tx = server_tx.clone();
     let match_server = tokio::task::spawn(match_server.run());
     let match_server_background = tokio::task::spawn(async move {
-        let mut interval = tokio::time::interval(core::time::Duration::from_secs(5));
+        let mut interval = tokio::time::interval(core::time::Duration::from_secs(1));
+        let mut last_task = 2;
         loop {
             interval.tick().await;
-            let result = background_tx.schedule_background_task(BackgroundTask::MatchPlayers);
+            let result = background_tx.schedule_background_task(BACKGROUND_TASKS[last_task]);
             match result {
-                Ok(_) => continue,
+                Ok(_) => last_task = (last_task + 1) % 3,
                 Err(_) => break,
             }
         }

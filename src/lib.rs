@@ -169,7 +169,7 @@ async fn match_ws(
     let user = identity_to_user(identity, db).await.unwrap();
     tokio::task::spawn_local(handler::match_ws(
         (**match_server).clone(),
-        //user,
+        user,
         session,
         msg_stream,
     ));
