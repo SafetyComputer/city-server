@@ -65,6 +65,21 @@ impl Players {
     }
 }
 
+struct Session {
+    uuid: i32,
+    tx: mpsc::UnboundedSender<String>,
+}
+
+impl Session {
+    fn send(&self, message: String) -> Result<(), mpsc::error::SendError<String>> {
+        self.tx.send(message)
+    }
+
+    fn is_closed(&self) -> bool {
+        self.tx.is_closed()
+    }
+}
+
 struct MatchRoom {
     game: Game,
     players: Players,
@@ -155,7 +170,7 @@ enum Command {
     Connect {
         uuid: i32,
         conn_tx: mpsc::UnboundedSender<String>,
-        res_tx: oneshot::Sender<()>,
+        res_tx: oneshot::Sender<i32>,
     },
 
     Disconnect {
@@ -165,6 +180,7 @@ enum Command {
 
     Message {
         msg: String,
+        room: i32,
         conn: i32,
         res_tx: oneshot::Sender<()>,
     },
@@ -181,6 +197,7 @@ enum Command {
 
     Move {
         mv: Move,
+        room: i32,
         conn: i32,
         res_tx: oneshot::Sender<bool>,
     },
@@ -199,12 +216,12 @@ enum Command {
 
     CreateMatchRoom {
         conn: i32,
-        res_tx: oneshot::Sender<i32>
-    }
+        res_tx: oneshot::Sender<i32>,
+    },
 }
 
 pub struct MatchServer {
-    sessions: HashMap<i32, mpsc::UnboundedSender<String>>,
+    sessions: HashMap<i32, Session>,
     matches: HashMap<i32, MatchRoom>,
     waitings: HashSet<i32>,
     cmd_rx: mpsc::UnboundedReceiver<Command>,
@@ -229,7 +246,7 @@ impl MatchServer {
         )
     }
 
-    async fn send_system_message(&self, matc: i32, from: i32, msg: impl Into<String>) {
+    async fn send_message_in_room(&self, matc: i32, from: i32, msg: impl Into<String>) {
         if let Some(room) = self.matches.get(&matc) {
             let msg = msg.into();
             for conn_id in &room.viewers {
@@ -243,18 +260,40 @@ impl MatchServer {
         }
     }
 
+    async fn broadcast_message(&self, room: i32, msg: impl Into<String>) {
+        if let Some(room) = self.matches.get(&room) {
+            let msg = msg.into();
+            for conn_id in &room.viewers {
+                if let Some(tx) = self.sessions.get(conn_id) {
+                    // errors if client disconnected abruptly and hasn't been timed-out yet
+                    let _ = tx.send(msg.clone());
+                }
+            }
+        }
+    }
+
     async fn send_message(&self, conn: i32, msg: impl Into<String>) {
         if let Some(matc) = self
             .matches
             .iter()
             .find_map(|(matc, room)| room.contains(conn).then_some(matc))
         {
-            self.send_system_message(*matc, conn, msg).await;
+            self.send_message_in_room(*matc, conn, msg).await;
         }
     }
 
-    async fn connect(&mut self, uuid: i32, tx: mpsc::UnboundedSender<String>) {
-        self.sessions.insert(uuid, tx);
+    async fn connect(&mut self, uuid: i32, tx: mpsc::UnboundedSender<String>) -> i32 {
+        let mut rng = rand::rng();
+        let id = loop {
+            let result: i32 = rng.random();
+            if self.matches.contains_key(&result) {
+                continue;
+            } else {
+                break result;
+            }
+        };
+        self.sessions.insert(id, Session { uuid, tx });
+        id
     }
 
     async fn start_matching(&mut self, uuid: i32) {
@@ -281,8 +320,7 @@ impl MatchServer {
 
     async fn create_match_room(&mut self, uuid: i32) -> i32 {
         self.waitings.remove(&uuid);
-        let mut rng = rand::rng();
-        let blue: bool = rng.random();
+        let blue: bool = rand::rng().random();
         if blue {
             self._create_match_room(Some(uuid), None).await
         } else {
@@ -306,6 +344,33 @@ impl MatchServer {
         }
     }
 
+    async fn make_move(&mut self, mv: Move, matc: i32, uuid: i32) -> bool {
+        let room = self.matches.get_mut(&matc);
+        match room {
+            Some(room) => {
+                let color = room.players.get_color(uuid);
+                match color {
+                    None => return false,
+                    Some(Color::Blue) => {
+                        if room.game.blue_turn {
+                            room.game.make_move(mv, true)
+                        } else {
+                            false
+                        }
+                    }
+                    Some(Color::Green) => {
+                        if !room.game.blue_turn {
+                            room.game.make_move(mv, true)
+                        } else {
+                            false
+                        }
+                    }
+                }
+            }
+            None => return false,
+        }
+    }
+
     async fn disconnect(&mut self, conn_id: i32, name: String) {
         let mut matches: Vec<i32> = Vec::new();
         self.waitings.remove(&conn_id);
@@ -318,7 +383,7 @@ impl MatchServer {
         }
 
         for matc in matches {
-            self.send_system_message(matc, conn_id, format!("{name} has left"))
+            self.send_message_in_room(matc, conn_id, format!("{name} has left"))
                 .await;
         }
     }
@@ -333,16 +398,16 @@ impl MatchServer {
                             conn_tx,
                             res_tx,
                         } => {
-                            self.connect(uuid, conn_tx).await;
-                            let _ = res_tx.send(());
+                            let result = self.connect(uuid, conn_tx).await;
+                            let _ = res_tx.send(result);
                         }
 
                         Command::Disconnect { conn, name } => {
                             self.disconnect(conn, name).await;
                         }
 
-                        Command::Message { msg, conn, res_tx } => {
-                            self.send_message(conn, msg).await;
+                        Command::Message { msg, room, conn, res_tx } => {
+                            self.send_message_in_room(room, conn, msg).await;
                             let _ = res_tx.send(());
                         }
 
@@ -366,7 +431,10 @@ impl MatchServer {
                             let _ = res_tx.send(result);
                         }
 
-                        Command::Move {mv, conn, res_tx} => {},
+                        Command::Move {mv, room, conn, res_tx} => {
+                            let result = self.make_move(mv, room, conn).await;
+                            let _ = res_tx.send(result);
+                        },
 
                         Command::CreateMatchRoom{conn, res_tx} => {
                             let result = self.create_match_room(conn).await;
@@ -432,7 +500,7 @@ impl MatchServer {
         }
 
         for room_id in empty_rooms {
-            self.send_system_message(room_id, -1, "match ended").await;
+            self.broadcast_message(room_id, "match ended").await;
             self.matches.remove(&room_id);
         }
     }
@@ -445,7 +513,7 @@ pub struct MatchServerHandle {
 }
 
 impl MatchServerHandle {
-    pub async fn connect(&self, uuid: i32, conn_tx: mpsc::UnboundedSender<String>) {
+    pub async fn connect(&self, uuid: i32, conn_tx: mpsc::UnboundedSender<String>) -> i32 {
         let (res_tx, res_rx) = oneshot::channel();
 
         self.cmd_tx
@@ -459,11 +527,12 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn send_message(&self, conn: i32, msg: impl Into<String>) {
+    pub async fn send_message(&self, room: i32, conn: i32, msg: impl Into<String>) {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Message {
                 msg: msg.into(),
+                room,
                 conn,
                 res_tx,
             })
@@ -493,20 +562,41 @@ impl MatchServerHandle {
         res_rx.await.unwrap();
     }
 
-    pub async fn viewer_join(&self, room: i32, conn: i32) {
+    pub async fn viewer_join(&self, room: i32, conn: i32) -> bool {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::ViewerJoin { room, conn, res_tx })
             .unwrap();
-        res_rx.await.unwrap();
+        res_rx.await.unwrap()
     }
 
-    pub async fn player_join(&self, room: i32, conn: i32) {
+    pub async fn player_join(&self, room: i32, conn: i32) -> bool {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::PlayerJoin { room, conn, res_tx })
             .unwrap();
-        res_rx.await.unwrap();
+        res_rx.await.unwrap()
+    }
+
+    pub async fn create_match_room(&self, conn: i32) -> i32 {
+        let (res_tx, res_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::CreateMatchRoom { conn, res_tx })
+            .unwrap();
+        res_rx.await.unwrap()
+    }
+
+    pub async fn make_move(&self, mv: Move, room: i32, conn: i32) -> bool {
+        let (res_tx, res_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::Move {
+                mv,
+                room,
+                conn,
+                res_tx,
+            })
+            .unwrap();
+        res_rx.await.unwrap()
     }
 
     pub fn schedule_background_task(
