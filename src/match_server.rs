@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     io,
 };
 
@@ -518,18 +518,28 @@ impl MatchServer {
 
     async fn try_match_players(&mut self) {
         if self.waitings.len() >= 2 {
-            let players: Vec<ConnId> = self.waitings.drain().take(2).collect(); // maybe bug, not sure
-            let match_id = self
-                ._create_match_room(Some(players[0]), Some(players[1]))
-                .await;
-            let blue_session = self.sessions.get(&players[0]).unwrap();
-            let green_session = self.sessions.get(&players[1]).unwrap();
-            // 通知玩家匹配成功
-            let msg = ServerMessage::match_message(green_session.uuid, match_id, Color::Blue);
-            let _ = blue_session.send(msg.to_string());
+            let mut players: VecDeque<ConnId> = self.waitings.drain().collect();
 
-            let msg = ServerMessage::match_message(blue_session.uuid, match_id, Color::Green);
-            let _ = green_session.send(msg.to_string());
+            while players.len() >= 2 {
+                let player_blue = players.pop_front().unwrap();
+                let player_green = players.pop_front().unwrap();
+                let match_id = self
+                    ._create_match_room(Some(player_blue), Some(player_green))
+                    .await;
+                let blue_session = self.sessions.get(&player_blue).unwrap();
+                let green_session = self.sessions.get(&player_green).unwrap();
+                // 通知玩家匹配成功
+                let msg = ServerMessage::match_message(green_session.uuid, match_id, Color::Blue);
+                let _ = blue_session.send(msg.to_string());
+
+                let msg = ServerMessage::match_message(blue_session.uuid, match_id, Color::Green);
+                let _ = green_session.send(msg.to_string());
+            }
+
+            while !players.is_empty() {
+                let player = players.pop_front().unwrap();
+                self.waitings.insert(player);
+            }
         }
     }
 

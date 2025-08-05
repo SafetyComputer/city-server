@@ -8,11 +8,9 @@ use futures_util::try_join;
 
 use city_server::match_server::{MatchServer, BACKGROUND_TASKS};
 
-fn get_secret_key() -> Key {
-    dotenv().ok();
-    let key_raw = env::var("KEY").unwrap();
-    let length = key_raw.len();
+fn get_secret_key(key_raw: &String) -> Key {
     let key_chars = key_raw.as_bytes();
+    let length = key_chars.len();
     let mut key: [u8; 64] = [0; 64];
     for i in 0..64 {
         key[i] = key_chars[i % length];
@@ -25,7 +23,8 @@ async fn main() -> std::io::Result<()> {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").unwrap();
     let pool = city_server::Dbpool::from(&database_url);
-    let key = get_secret_key();
+    let key_raw = env::var("KEY").unwrap();
+    let key = get_secret_key(&key_raw);
     let (match_server, server_tx) = MatchServer::new();
     let background_tx = server_tx.clone();
     let match_server = tokio::task::spawn(match_server.run());
