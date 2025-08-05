@@ -4,10 +4,11 @@ use std::{
 };
 
 use rand::Rng;
+use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    game::{Game, Move},
+    game::{Game, Move, Winner},
     handler::ServerMessage,
 };
 
@@ -86,6 +87,11 @@ impl Players {
     }
 }
 
+pub struct MoveResult {
+    pub success: bool,
+    pub winner: Option<Winner>,
+}
+
 struct Session {
     uuid: i32,
     tx: mpsc::UnboundedSender<String>,
@@ -99,6 +105,15 @@ impl Session {
     fn is_closed(&self) -> bool {
         self.tx.is_closed()
     }
+}
+
+#[derive(Serialize)]
+pub struct MatchInfo {
+    room: RoomId,
+    game_history: Vec<Move>,
+    player_blue: Option<i32>,
+    player_green: Option<i32>,
+    viewers: Vec<i32>,
 }
 
 struct MatchRoom {
@@ -135,45 +150,41 @@ impl MatchRoom {
     //     self.players.blue.is_some() && self.players.green.is_some()
     // }
 
-    fn join_players(
-        &mut self,
-        id: ConnId,
-        color: Option<Color>,
-    ) -> (Option<ConnId>, Option<Color>) {
+    fn join_players(&mut self, id: ConnId, color: Option<Color>) -> bool {
         if self.is_player(id) || self.contains(id) {
-            return (None, None);
+            return false;
         }
         match color {
             Some(Color::Blue) => {
                 if let None = self.players.blue {
                     self.players.blue = Some(id);
                     self.viewers.insert(id);
-                    return (self.players.green, color);
+                    return true;
                 } else {
-                    return (None, None);
+                    return false;
                 }
             }
             Some(Color::Green) => {
                 if let None = self.players.green {
                     self.players.green = Some(id);
                     self.viewers.insert(id);
-                    return (self.players.blue, color);
+                    return true;
                 } else {
-                    return (None, None);
+                    return false;
                 }
             }
             None => {
                 if let None = self.players.blue {
                     self.players.blue = Some(id);
                     self.viewers.insert(id);
-                    return (self.players.green, Some(Color::Blue));
+                    return true;
                 }
                 if let None = self.players.green {
                     self.players.green = Some(id);
                     self.viewers.insert(id);
-                    return (self.players.blue, Some(Color::Green));
+                    return true;
                 }
-                return (None, None);
+                return false;
             }
         }
     }
@@ -200,7 +211,6 @@ enum Command {
 
     Disconnect {
         conn: ConnId,
-        name: String,
     },
 
     Message {
@@ -224,19 +234,19 @@ enum Command {
         mv: Move,
         room: RoomId,
         conn: ConnId,
-        res_tx: oneshot::Sender<bool>,
+        res_tx: oneshot::Sender<MoveResult>,
     },
 
     PlayerJoin {
         room: RoomId,
         conn: ConnId,
-        res_tx: oneshot::Sender<Option<JoinRoomResult>>,
+        res_tx: oneshot::Sender<Option<ServerMessage>>,
     },
 
     ViewerJoin {
         room: RoomId,
         conn: ConnId,
-        res_tx: oneshot::Sender<bool>,
+        res_tx: oneshot::Sender<Option<ServerMessage>>,
     },
 
     CreateMatchRoom {
@@ -269,6 +279,39 @@ impl MatchServer {
             },
             MatchServerHandle { cmd_tx, task_tx },
         )
+    }
+
+    async fn get_match_info(&self, room_id: RoomId) -> Option<MatchInfo> {
+        if let Some(room) = self.matches.get(&room_id)
+            && !room.is_empty()
+        {
+            let game_history = room.game.history.clone();
+            let player_blue = if let Some(conn) = room.players.blue {
+                Some(self.sessions.get(&conn).unwrap().uuid)
+            } else {
+                None
+            };
+            let player_green = if let Some(conn) = room.players.green {
+                Some(self.sessions.get(&conn).unwrap().uuid)
+            } else {
+                None
+            };
+            let viewers: HashSet<i32> = room
+                .viewers
+                .iter()
+                .map(|conn| self.sessions.get(conn).unwrap().uuid)
+                .collect();
+            let info = MatchInfo {
+                room: room_id,
+                game_history,
+                player_blue,
+                player_green,
+                viewers: viewers.into_iter().collect(),
+            };
+            Some(info)
+        } else {
+            None
+        }
     }
 
     async fn send_message_in_room(&self, room: RoomId, from: ConnId, msg: &ServerMessage) {
@@ -357,95 +400,144 @@ impl MatchServer {
         &mut self,
         room_id: RoomId,
         conn: ConnId,
-    ) -> Option<JoinRoomResult> {
+    ) -> Option<ServerMessage> {
         let room = self.matches.get_mut(&room_id);
         match room {
             Some(room) => {
-                let (opponent, color) = room.join_players(conn, None);
-                if opponent.is_none() || color.is_none() {
+                let result = room.join_players(conn, None);
+                if !result {
                     return None;
                 }
-
-                let opponent = self.sessions.get(&opponent.unwrap()).unwrap();
-                let color = color.unwrap();
-
-                let self_uuid = self.sessions.get(&conn).unwrap().uuid;
-                let msg = match color {
-                    Color::Blue => ServerMessage::match_message(self_uuid, room_id, Color::Green),
-                    Color::Green => ServerMessage::match_message(self_uuid, room_id, Color::Blue),
-                };
-                let _ = opponent.send(msg.to_string());
-
-                Some(JoinRoomResult {
-                    opponent_id: opponent.uuid,
-                    self_color: color,
-                })
+                let msg =
+                    ServerMessage::join_message(self.sessions.get(&conn).unwrap().uuid, room_id);
+                self.send_message_in_room(room_id, conn, &msg).await;
+                let msg = ServerMessage::match_message(
+                    &self.get_match_info(room_id).await.unwrap(),
+                    room_id,
+                );
+                self.send_message_in_room(room_id, conn, &msg).await;
+                Some(msg)
             }
             None => None,
         }
     }
 
-    async fn join_viewers_match_room(&mut self, room: RoomId, conn: ConnId) -> bool {
-        let room = self.matches.get_mut(&room);
-        match room {
-            Some(room) => room.join_viewers(conn),
-            None => return false,
-        }
-    }
-
-    async fn make_move(&mut self, mv: Move, room_id: RoomId, conn: ConnId) -> bool {
+    async fn join_viewers_match_room(
+        &mut self,
+        room_id: RoomId,
+        conn: ConnId,
+    ) -> Option<ServerMessage> {
         let room = self.matches.get_mut(&room_id);
         match room {
             Some(room) => {
-                if room.game.game_over() {
-                    return false;
-                }
-                let color = room.players.get_color(conn);
-                match color {
-                    None => return false,
-                    Some(Color::Blue) => {
-                        if room.game.blue_turn {
-                            let result = room.game.make_move(mv, true);
-                            if result {
-                                let msg = ServerMessage::move_message(&mv);
-                                self.send_message_in_room(room_id, conn, &msg).await;
-                            }
-                            result
-                        } else {
-                            false
-                        }
-                    }
-                    Some(Color::Green) => {
-                        if !room.game.blue_turn {
-                            let result = room.game.make_move(mv, true);
-                            if result {
-                                let msg = ServerMessage::move_message(&mv);
-                                self.send_message_in_room(room_id, conn, &msg).await;
-                            }
-                            result
-                        } else {
-                            false
-                        }
-                    }
+                if room.join_viewers(conn) {
+                    let info = self.get_match_info(room_id).await.unwrap();
+                    let msg = ServerMessage::join_message(
+                        self.sessions.get(&conn).unwrap().uuid,
+                        room_id,
+                    );
+                    self.send_message_in_room(room_id, conn, &msg).await;
+                    Some(ServerMessage::match_message(&info, room_id))
+                } else {
+                    None
                 }
             }
-            None => return false,
+            None => None,
         }
     }
 
-    async fn disconnect(&mut self, conn: ConnId, name: String) {
-        let mut matches: Vec<RoomId> = Vec::new();
-        self.waitings.remove(&conn);
-        if self.sessions.remove(&conn).is_some() {
-            for (room_id, room) in &mut self.matches {
-                if room.contains(conn) {
-                    matches.push(*room_id);
+    async fn make_move(&mut self, mv: Move, room_id: RoomId, conn: ConnId) -> MoveResult {
+        let room = self.matches.get_mut(&room_id);
+
+        if room.is_none() {
+            return MoveResult {
+                success: false,
+                winner: None,
+            };
+        }
+
+        let room = room.unwrap();
+        let success = {
+            if room.game.game_over() {
+                false
+            } else {
+                let color = room.players.get_color(conn);
+                match color {
+                    None => false,
+
+                    Some(Color::Blue) => {
+                        if room.game.blue_turn {
+                            let result = room.game.make_move(mv, true);
+                            result
+                        } else {
+                            false
+                        }
+                    }
+
+                    Some(Color::Green) => {
+                        if !room.game.blue_turn {
+                            let result = room.game.make_move(mv, true);
+                            result
+                        } else {
+                            false
+                        }
+                    }
                 }
             }
+        };
+
+        let game_over = room.game.game_over();
+        let result = if game_over {
+            let (winner, _) = room.game.game_result();
+            MoveResult {
+                success,
+                winner: Some(winner),
+            }
+        } else {
+            MoveResult {
+                success,
+                winner: None,
+            }
+        };
+
+        if success {
+            let msg = ServerMessage::move_message(&mv, room_id);
+            self.send_message_in_room(room_id, conn, &msg).await;
         }
-        let msg = ServerMessage::system_message(format!("{name} has left"));
-        for room_id in matches {
-            self.broadcast_message(room_id, &msg).await;
+
+        if let Some(winner) = result.winner {
+            let msg = ServerMessage::end_message(room_id, winner);
+            self.send_message_in_room(room_id, conn, &msg).await;
+        }
+
+        result
+    }
+
+    async fn disconnect(&mut self, conn: ConnId) {
+        // let mut matches: Vec<RoomId> = Vec::new();
+        self.waitings.remove(&conn);
+        if let Some(session) = self.sessions.remove(&conn) {
+            let matches: Vec<RoomId> = self
+                .matches
+                .iter()
+                .filter_map(|(room_id, room)| {
+                    if room.contains(conn) {
+                        Some(*room_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            // for (room_id, room) in &mut self.matches {
+            //     if room.contains(conn) {
+            //         matches.push(*room_id);
+            //     }
+            // }
+
+            for room_id in matches {
+                let msg = ServerMessage::leave_message(session.uuid, room_id);
+                self.broadcast_message(room_id, &msg).await;
+            }
         }
     }
 
@@ -454,6 +546,7 @@ impl MatchServer {
             tokio::select! {
                 Some(cmd) = self.cmd_rx.recv() => {
                     match cmd {
+
                         Command::Connect {
                             uuid,
                             conn_tx,
@@ -463,12 +556,12 @@ impl MatchServer {
                             let _ = res_tx.send(result);
                         }
 
-                        Command::Disconnect { conn, name } => {
-                            self.disconnect(conn, name).await;
+                        Command::Disconnect { conn } => {
+                            self.disconnect(conn).await;
                         }
 
                         Command::Message { msg, room, conn, res_tx } => {
-                            let msg = ServerMessage::chat_message(msg);
+                            let msg = ServerMessage::chat_message(msg, room);
                             self.send_message_in_room(room, conn, &msg).await;
                             let _ = res_tx.send(());
                         }
@@ -526,14 +619,9 @@ impl MatchServer {
                 let match_id = self
                     ._create_match_room(Some(player_blue), Some(player_green))
                     .await;
-                let blue_session = self.sessions.get(&player_blue).unwrap();
-                let green_session = self.sessions.get(&player_green).unwrap();
-                // 通知玩家匹配成功
-                let msg = ServerMessage::match_message(green_session.uuid, match_id, Color::Blue);
-                let _ = blue_session.send(msg.to_string());
-
-                let msg = ServerMessage::match_message(blue_session.uuid, match_id, Color::Green);
-                let _ = green_session.send(msg.to_string());
+                let info = self.get_match_info(match_id).await.unwrap();
+                let msg = ServerMessage::match_message(&info, match_id);
+                self.broadcast_message(match_id, &msg).await;
             }
 
             while !players.is_empty() {
@@ -544,29 +632,47 @@ impl MatchServer {
     }
 
     async fn check_connections(&mut self) {
-        let mut dead_connections = Vec::new();
-        for (id, tx) in &self.sessions {
-            if tx.is_closed() {
-                dead_connections.push(*id);
-            }
-        }
+        // let mut dead_connections = Vec::new();
+        // for (id, tx) in &self.sessions {
+        //     if tx.is_closed() {
+        //         dead_connections.push(*id);
+        //     }
+        // }
 
-        for id in dead_connections {
-            self.disconnect(id, "anonymous".to_string()).await;
+        let dead_connections: Vec<ConnId> = self
+            .sessions
+            .iter()
+            .filter_map(|(id, tx)| if tx.is_closed() { Some(*id) } else { None })
+            .collect();
+
+        for conn_id in dead_connections {
+            self.disconnect(conn_id).await;
         }
     }
 
     async fn check_matches(&mut self) {
-        let mut empty_rooms = Vec::new();
+        // let mut empty_rooms = Vec::new();
 
-        for (room_id, room) in &self.matches {
-            if room.is_empty() {
-                empty_rooms.push(*room_id);
-            }
-        }
+        // for (room_id, room) in &self.matches {
+        //     if room.is_empty() {
+        //         empty_rooms.push(*room_id);
+        //     }
+        // }
 
-        let msg = ServerMessage::system_message("match ended");
+        let empty_rooms: Vec<RoomId> = self
+            .matches
+            .iter()
+            .filter_map(|(id, room)| {
+                if room.is_empty() {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         for room_id in empty_rooms {
+            let msg = ServerMessage::end_message(room_id, Winner::Draw);
             self.broadcast_message(room_id, &msg).await;
             self.matches.remove(&room_id);
         }
@@ -607,10 +713,8 @@ impl MatchServerHandle {
         res_rx.await.unwrap();
     }
 
-    pub fn disconnect(&self, conn: ConnId, name: String) {
-        self.cmd_tx
-            .send(Command::Disconnect { conn, name })
-            .unwrap();
+    pub fn disconnect(&self, conn: ConnId) {
+        self.cmd_tx.send(Command::Disconnect { conn }).unwrap();
     }
 
     pub async fn start_matching(&self, conn: ConnId) {
@@ -629,7 +733,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap();
     }
 
-    pub async fn join_viewers(&self, room: RoomId, conn: ConnId) -> bool {
+    pub async fn join_viewers(&self, room: RoomId, conn: ConnId) -> Option<ServerMessage> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::ViewerJoin { room, conn, res_tx })
@@ -637,7 +741,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn join_players(&self, room: RoomId, conn: ConnId) -> Option<JoinRoomResult> {
+    pub async fn join_players(&self, room: RoomId, conn: ConnId) -> Option<ServerMessage> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::PlayerJoin { room, conn, res_tx })
@@ -653,7 +757,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn make_move(&self, mv: Move, room: RoomId, conn: ConnId) -> bool {
+    pub async fn make_move(&self, mv: Move, room: RoomId, conn: ConnId) -> MoveResult {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Move {
