@@ -8,8 +8,8 @@ use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    game::{Game, Move, Winner},
-    handler::ServerMessage,
+    game::logic::{Game, Move, Winner},
+    network::handler::ServerMessage,
 };
 
 pub type ConnId = u64;

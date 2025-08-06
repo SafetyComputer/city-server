@@ -6,15 +6,14 @@ use diesel::{
 };
 use serde::Deserialize;
 
+pub mod data;
 pub mod game;
-pub mod handler;
-pub mod match_server;
-pub mod models;
-pub mod schema;
+pub mod matchmaking;
+pub mod network;
 
-use models::*;
+use data::models::*;
 
-use crate::match_server::MatchServerHandle;
+use crate::matchmaking::service::MatchServerHandle;
 
 #[derive(Clone)]
 pub struct Dbpool {
@@ -65,7 +64,7 @@ async fn identity_to_user(
     identity: Identity,
     db: web::Data<Dbpool>,
 ) -> Result<User, diesel::result::Error> {
-    use schema::users::dsl::*;
+    use data::schema::users::dsl::*;
     let conn = &mut db.get_connection();
     let result: Result<User, diesel::result::Error> = users
         .filter(username.eq(&identity.id().unwrap()))
@@ -78,14 +77,14 @@ async fn login(
     request: HttpRequest,
     identity: Option<Identity>,
     db: web::Data<Dbpool>,
-    user_info: web::Query<UserPost>,
+    user_info: web::Json<UserPost>,
 ) -> HttpResponse {
     match identity {
         Some(_) => {
             return HttpResponse::Unauthorized().json("already logged in");
         }
         None => {
-            use schema::users::dsl::*;
+            use data::schema::users::dsl::*;
             let conn = &mut db.get_connection();
             let result: Result<User, _> = users
                 .filter(username.eq(&user_info.username))
@@ -116,7 +115,7 @@ async fn logout(identity: Option<Identity>) -> impl Responder {
 
 #[get("/user")]
 async fn get_user(db: web::Data<Dbpool>, user_info: web::Query<UserQuery>) -> impl Responder {
-    use schema::users::dsl;
+    use data::schema::users::dsl;
     let conn = &mut db.get_connection();
     let mut query = dsl::users
         .select((dsl::id, dsl::username, dsl::elo))
@@ -125,7 +124,7 @@ async fn get_user(db: web::Data<Dbpool>, user_info: web::Query<UserQuery>) -> im
         query = query.filter(dsl::id.eq(id));
     }
     if let Some(username) = &user_info.username {
-        query = query.filter(dsl::username.eq(username.clone()));
+        query = query.filter(dsl::username.eq(username));
     }
     match query.load::<UserGet>(conn) {
         Ok(users) if !users.is_empty() => HttpResponse::Ok().json(users),
@@ -138,8 +137,8 @@ async fn get_user(db: web::Data<Dbpool>, user_info: web::Query<UserQuery>) -> im
 }
 
 #[post("/user")]
-async fn post_user(db: web::Data<Dbpool>, user_info: web::Query<UserPost>) -> impl Responder {
-    use schema::users::dsl::*;
+async fn post_user(db: web::Data<Dbpool>, user_info: web::Json<UserPost>) -> impl Responder {
+    use data::schema::users::dsl::*;
     let conn = &mut db.get_connection();
     let result: Vec<User> = users
         .filter(username.eq(&user_info.username))
@@ -167,7 +166,7 @@ async fn match_ws(
 ) -> Result<HttpResponse, actix_web::Error> {
     let (res, session, msg_stream) = actix_ws::handle(&req, stream)?;
     let user = identity_to_user(identity, db).await.unwrap();
-    tokio::task::spawn_local(handler::match_ws(
+    tokio::task::spawn_local(network::handler::match_ws(
         (**match_server).clone(),
         user,
         session,

@@ -92,7 +92,7 @@ pub enum Direction {
     Right = 3,
 }
 
-pub const DIRECION_VALUES: [Direction; 4] = [
+pub const DIRECTION_VALUES: [Direction; 4] = [
     Direction::Up,
     Direction::Down,
     Direction::Left,
@@ -340,7 +340,7 @@ impl Game {
                 continue;
             }
 
-            for direction in DIRECION_VALUES {
+            for direction in DIRECTION_VALUES {
                 let next = current.move_to(direction);
                 if !next.inside(self.width, self.height) {
                     continue;
@@ -388,7 +388,7 @@ impl Game {
 
         while !queue.is_empty() {
             let (current, d) = queue.remove(0).unwrap();
-            for dir in DIRECION_VALUES {
+            for dir in DIRECTION_VALUES {
                 let next = current.move_to(dir);
                 if !next.inside(self.width, self.height) {
                     continue;
@@ -440,7 +440,7 @@ impl Game {
                 }
 
                 let current = Coordinate::new(x, y);
-                for direction in DIRECION_VALUES {
+                for direction in DIRECTION_VALUES {
                     let next = current.move_to(direction);
                     if !next.inside(self.width, self.height) {
                         continue;

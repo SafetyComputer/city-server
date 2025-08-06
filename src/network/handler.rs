@@ -7,7 +7,8 @@ use tokio::{sync::mpsc, time::interval};
 
 use crate::{
     game::{Move, Winner},
-    match_server::{ConnId, MatchInfo, MatchServerHandle, RoomId},
+    matchmaking::service::{ConnId, MatchInfo, MatchServerHandle, RoomId},
+    data::models::User,
 };
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -140,7 +141,7 @@ impl ServerMessage {
 
 pub async fn match_ws(
     match_server: MatchServerHandle,
-    user: crate::models::User,
+    user: User,
     mut session: actix_ws::Session,
     msg_stream: actix_ws::MessageStream,
 ) {

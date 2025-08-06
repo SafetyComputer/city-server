@@ -7,7 +7,7 @@ use actix_web::{App, HttpServer, cookie::Key, web};
 use dotenvy::dotenv;
 use futures_util::try_join;
 
-use city_server::match_server::{BACKGROUND_TASKS, MatchServer};
+use city_server::matchmaking::{BACKGROUND_TASKS, MatchServer};
 
 fn get_secret_key(key_raw: &String) -> Key {
     let key_chars = key_raw.as_bytes();

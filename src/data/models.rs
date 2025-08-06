@@ -2,7 +2,7 @@ use diesel::prelude::*;
 use serde::{Serialize, Deserialize};
 
 #[derive(Queryable, Selectable, Identifiable, Insertable, Serialize, Deserialize)]
-#[diesel(table_name = crate::schema::users)]
+#[diesel(table_name = crate::data::schema::users)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct User {
     #[diesel(deserialize_as = i32)]
@@ -13,7 +13,7 @@ pub struct User {
 }
 
 #[derive(Queryable, Selectable, Identifiable, Serialize, Deserialize)]
-#[diesel(table_name = crate::schema::users)]
+#[diesel(table_name = crate::data::schema::users)]
 pub struct UserGet {
     pub id: i32,
     pub username: String,
