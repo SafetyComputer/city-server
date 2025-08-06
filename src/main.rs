@@ -8,6 +8,7 @@ use dotenvy::dotenv;
 use futures_util::try_join;
 
 use city_server::matchmaking::{BACKGROUND_TASKS, MatchServer};
+use city_server::network;
 
 fn get_secret_key(key_raw: &String) -> Key {
     let key_chars = key_raw.as_bytes();
@@ -23,7 +24,7 @@ fn get_secret_key(key_raw: &String) -> Key {
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").unwrap();
-    let pool = city_server::Dbpool::from(&database_url);
+    let pool = city_server::data::Dbpool::from(&database_url);
     let key_raw = env::var("KEY").unwrap();
     let key = get_secret_key(&key_raw);
     let (match_server, server_tx) = MatchServer::new();
@@ -62,11 +63,11 @@ async fn main() -> std::io::Result<()> {
                     )
                     .build(),
             )
-            .service(city_server::login)
-            .service(city_server::logout)
-            .service(city_server::post_user)
-            .service(city_server::get_user)
-            .service(city_server::match_ws)
+            .service(network::login)
+            .service(network::logout)
+            .service(network::post_user)
+            .service(network::get_user)
+            .service(network::get_match_ws)
     })
     .bind("0.0.0.0:8088")?
     .run();

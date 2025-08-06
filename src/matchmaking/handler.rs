@@ -6,15 +6,13 @@ use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::interval};
 
 use crate::{
+    data::models::User,
     game::{Move, Winner},
     matchmaking::service::{ConnId, MatchInfo, MatchServerHandle, RoomId},
-    data::models::User,
 };
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
-
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
-
 type CommandId = u64;
 
 #[derive(Deserialize)]
@@ -146,9 +144,7 @@ pub async fn match_ws(
     msg_stream: actix_ws::MessageStream,
 ) {
     let uuid = user.id.unwrap();
-    //let uuid = 0;
     let name: String = user.username;
-    //let name = "0".to_string();
     let mut last_heartbeat = Instant::now();
     let mut interval = interval(HEARTBEAT_INTERVAL);
 
@@ -164,40 +160,32 @@ pub async fn match_ws(
     let close_reason = loop {
         tokio::select! {
             Some(Ok(msg)) = msg_stream.next() => {
-
                 match msg {
                     AggregatedMessage::Ping(bytes) => {
                         last_heartbeat = Instant::now();
                         session.pong(&bytes).await.unwrap();
                     }
-
                     AggregatedMessage::Pong(_) => {
                         last_heartbeat = Instant::now();
                     }
-
                     AggregatedMessage::Text(text) => {
                         process_text_msg(&match_server, &mut session, &text, conn_id, &name)
                             .await;
                     }
-
                     AggregatedMessage::Binary(_bin) => {
                     }
-
                     AggregatedMessage::Close(reason) => break reason,
                 }
             }
-
             Some(chat_msg) = conn_rx.recv() => {
                  session.text(chat_msg).await.unwrap();
             }
-
             _ = interval.tick() => {
                 if Instant::now().duration_since(last_heartbeat) > CLIENT_TIMEOUT {
                     break None;
                 }
                 let _ = session.ping(b"").await;
             }
-
             else => {
                 break None;
             }
@@ -205,7 +193,6 @@ pub async fn match_ws(
     };
 
     match_server.disconnect(conn_id);
-
     let _ = session.close(close_reason).await;
 }
 
@@ -221,7 +208,6 @@ async fn process_text_msg(
         match msg.command {
             Command::SendMessage => {
                 let user_msg = format!("{name}: {}", msg.data.unwrap());
-
                 match_server
                     .send_message(msg.room.unwrap(), conn, user_msg)
                     .await;
@@ -229,21 +215,18 @@ async fn process_text_msg(
                     ServerMessage::success_message("successfully sent message", msg.command_id);
                 let _ = session.text(msg.to_string()).await;
             }
-
             Command::StartMatching => {
                 match_server.start_matching(conn).await;
                 let msg =
                     ServerMessage::success_message("successfully started matching", msg.command_id);
                 let _ = session.text(msg.to_string()).await;
             }
-
             Command::StopMatching => {
                 match_server.stop_matching(conn).await;
                 let msg =
                     ServerMessage::success_message("successfully stopped matching", msg.command_id);
                 let _ = session.text(msg.to_string()).await;
             }
-
             Command::Move => {
                 let mv = serde_json::from_str(msg.data.unwrap().as_str());
                 match mv {
@@ -271,13 +254,11 @@ async fn process_text_msg(
                     }
                 }
             }
-
             Command::CreateMatchRoom => {
                 let room_id = match_server.create_match_room(conn).await;
                 let msg = ServerMessage::success_message(format!("{room_id}"), msg.command_id);
                 let _ = session.text(msg.to_string()).await;
             }
-
             Command::JoinPlayers => {
                 let room_id = msg.room.unwrap();
                 let result = match_server.join_players(room_id, conn).await;
@@ -290,7 +271,6 @@ async fn process_text_msg(
                         let _ = session.text(msg.to_string()).await;
                         let _ = session.text(match_message.to_string()).await;
                     }
-
                     None => {
                         let msg = ServerMessage::error_message(
                             format!("failed to join room {} as player", room_id),
@@ -300,7 +280,6 @@ async fn process_text_msg(
                     }
                 }
             }
-
             Command::JoinViewers => {
                 let room_id = msg.room.unwrap();
                 let result = match_server.join_viewers(room_id, conn).await;
@@ -313,7 +292,6 @@ async fn process_text_msg(
                         let _ = session.text(msg.to_string()).await;
                         let _ = session.text(match_message.to_string()).await;
                     }
-
                     None => {
                         let msg = ServerMessage::error_message(
                             format!("failed to join room {} as viewer", room_id),
