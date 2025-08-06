@@ -7,10 +7,9 @@ use rand::Rng;
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{
-    game::logic::{Game, Move, Winner},
-    network::handler::ServerMessage,
-};
+use crate::game::logic::{Game, Move, Winner};
+
+use super::handler::ServerMessage;
 
 pub type ConnId = u64;
 
@@ -662,13 +661,7 @@ impl MatchServer {
         let empty_rooms: Vec<RoomId> = self
             .matches
             .iter()
-            .filter_map(|(id, room)| {
-                if room.is_empty() {
-                    Some(*id)
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(id, room)| if room.is_empty() { Some(*id) } else { None })
             .collect();
 
         for room_id in empty_rooms {
