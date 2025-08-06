@@ -1,12 +1,12 @@
-use std::{env, io};
-
+use actix_cors::Cors;
 use actix_identity::IdentityMiddleware;
 use actix_session::{SessionMiddleware, config::PersistentSession, storage::CookieSessionStore};
 use actix_web::{App, HttpServer, cookie::Key, web};
 use dotenvy::dotenv;
 use futures_util::try_join;
+use std::{env, io};
 
-use city_server::match_server::{MatchServer, BACKGROUND_TASKS};
+use city_server::match_server::{BACKGROUND_TASKS, MatchServer};
 
 fn get_secret_key(key_raw: &String) -> Key {
     let key_chars = key_raw.as_bytes();
@@ -48,6 +48,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(server_tx.clone()))
+            .wrap(Cors::permissive())
             .wrap(IdentityMiddleware::default())
             .wrap(
                 SessionMiddleware::builder(CookieSessionStore::default(), key.clone())
