@@ -50,13 +50,6 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(server_tx.clone()))
-            .wrap(
-                Cors::default()
-                    .allow_any_origin()
-                    .allow_any_header()
-                    .allow_any_method()
-                    .supports_credentials(),
-            )
             .wrap(IdentityMiddleware::default())
             .wrap(
                 SessionMiddleware::builder(CookieSessionStore::default(), key.clone())
@@ -69,6 +62,7 @@ async fn main() -> std::io::Result<()> {
                     )
                     .build(),
             )
+            .wrap(Cors::permissive())
             .service(network::login)
             .service(network::logout)
             .service(network::post_user)
