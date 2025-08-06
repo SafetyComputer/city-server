@@ -1,10 +1,11 @@
+use std::{env, io};
+
 use actix_cors::Cors;
 use actix_identity::IdentityMiddleware;
 use actix_session::{SessionMiddleware, config::PersistentSession, storage::CookieSessionStore};
 use actix_web::{App, HttpServer, cookie::Key, web};
 use dotenvy::dotenv;
 use futures_util::try_join;
-use std::{env, io};
 
 use city_server::match_server::{BACKGROUND_TASKS, MatchServer};
 
