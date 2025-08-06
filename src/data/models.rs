@@ -1,5 +1,5 @@
 use diesel::prelude::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Queryable, Selectable, Identifiable, Insertable, Serialize, Deserialize)]
 #[diesel(table_name = crate::data::schema::users)]
@@ -9,7 +9,7 @@ pub struct User {
     pub id: Option<i32>,
     pub username: String,
     pub password: String,
-    pub elo: i32
+    pub elo: i32,
 }
 
 #[derive(Queryable, Selectable, Identifiable, Serialize, Deserialize)]
@@ -17,5 +17,5 @@ pub struct User {
 pub struct UserGet {
     pub id: i32,
     pub username: String,
-    pub elo: i32
+    pub elo: i32,
 }

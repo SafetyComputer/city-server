@@ -2,8 +2,8 @@ pub mod models;
 pub mod schema;
 
 use diesel::{
-    r2d2::{ConnectionManager, Pool, PooledConnection},
     PgConnection,
+    r2d2::{ConnectionManager, Pool, PooledConnection},
 };
 
 #[derive(Clone)]

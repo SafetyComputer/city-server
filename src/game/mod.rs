@@ -1,4 +1,4 @@
-pub mod logic;
 pub mod ai;
+pub mod logic;
 
-pub use logic::{Move, Winner, Game};
+pub use logic::{Game, Move, Winner};

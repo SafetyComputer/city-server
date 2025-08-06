@@ -223,8 +223,6 @@ impl fmt::Debug for Move {
     }
 }
 
-
-
 #[derive(Debug, Serialize)]
 pub struct Score {
     blue: i32,

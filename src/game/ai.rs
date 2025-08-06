@@ -1,7 +1,9 @@
-use super::*;
-use rand::Rng;
 use std::fmt;
 use std::time;
+
+use rand::Rng;
+
+use super::*;
 
 pub struct MinimaxPlayer {
     game: Game,
