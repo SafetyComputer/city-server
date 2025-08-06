@@ -30,12 +30,12 @@ async fn main() -> std::io::Result<()> {
     let match_server = tokio::task::spawn(match_server.run());
     let match_server_background = tokio::task::spawn(async move {
         let mut interval = tokio::time::interval(core::time::Duration::from_secs(1));
-        let mut last_task = 2;
+        let mut next_task = 2;
         loop {
             interval.tick().await;
-            let result = background_tx.schedule_background_task(BACKGROUND_TASKS[last_task]);
+            let result = background_tx.schedule_background_task(BACKGROUND_TASKS[next_task]);
             match result {
-                Ok(_) => last_task = (last_task + 1) % 3,
+                Ok(_) => next_task = (next_task + 1) % 3,
                 Err(_) => break,
             }
         }
