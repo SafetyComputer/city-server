@@ -188,7 +188,7 @@ impl MatchRoom {
     // }
 
     fn join_players(&mut self, id: Uuid, color: Option<Color>) -> bool {
-        if self.is_player(id) || self.contains(id) {
+        if self.is_player(id) {
             return false;
         }
         match color {
@@ -228,6 +228,10 @@ impl MatchRoom {
 
     fn join_viewers(&mut self, id: Uuid) -> bool {
         self.viewers.insert(id)
+    }
+
+    fn remove(&mut self, id: Uuid) -> bool {
+        self.viewers.remove(&id)
     }
 
     fn contains(&self, id: Uuid) -> bool {
@@ -303,6 +307,12 @@ enum Command {
     GetMatchRoom {
         room: RoomId,
         res_tx: oneshot::Sender<Vec<MatchInfo>>,
+    },
+
+    Reconnect {
+        conn: ConnId,
+        uuid: Uuid,
+        res_tx: oneshot::Sender<Vec<ServerMessage>>,
     },
 }
 
@@ -381,16 +391,6 @@ impl MatchServer {
         }
     }
 
-    // async fn send_message(&self, conn: ConnId, msg: impl Into<String>) {
-    //     if let Some(matc) = self
-    //         .matches
-    //         .iter()
-    //         .find_map(|(matc, room)| room.contains(conn).then_some(matc))
-    //     {
-    //         self.send_message_in_room(*matc, conn, msg).await;
-    //     }
-    // }
-
     async fn connect(&mut self, uuid: Uuid, tx: mpsc::UnboundedSender<String>) -> ConnId {
         let mut rng = rand::rng();
         let conn_id = loop {
@@ -448,6 +448,15 @@ impl MatchServer {
         } else {
             self._create_match_room(None, Some(uuid)).await
         }
+    }
+
+    async fn list_match_room(&self) -> Vec<MatchInfo> {
+        let result: Vec<MatchInfo> = self
+            .matches
+            .iter()
+            .filter_map(|(room_id, _)| self.get_match_info(*room_id))
+            .collect();
+        result
     }
 
     async fn join_players_match_room(
@@ -569,31 +578,52 @@ impl MatchServer {
         result
     }
 
-    async fn disconnect(&mut self, conn: ConnId, uuid: Uuid) {
-        let sessions = self.sessions.get_mut(&uuid).unwrap();
-        sessions.remove(conn);
-        if sessions.is_empty() {
-            self.waitings.remove(&uuid);
-            self.sessions.remove(&uuid);
-            for room_id in self.matches.iter().filter_map(|(room_id, room)| {
-                if room.contains(uuid) {
+    async fn remove_user(&mut self, uuid: Uuid) {
+        self.waitings.remove(&uuid);
+        self.sessions.remove(&uuid);
+        let rooms: Vec<RoomId> = self
+            .matches
+            .iter_mut()
+            .filter_map(|(room_id, room)| {
+                if room.remove(uuid) {
                     Some(*room_id)
                 } else {
                     None
                 }
-            }) {
-                let msg = ServerMessage::leave_message(uuid, room_id);
-                self.broadcast_message(room_id, &msg).await;
-            }
+            })
+            .collect();
+        for room_id in rooms {
+            let msg = ServerMessage::leave_message(uuid, room_id);
+            self.broadcast_message(room_id, &msg).await;
         }
     }
 
-    async fn list_room(&self) -> Vec<MatchInfo> {
-        let result: Vec<MatchInfo> = self
+    async fn disconnect(&mut self, conn: ConnId, uuid: Uuid) {
+        let sessions = self.sessions.get_mut(&uuid).unwrap();
+        sessions.remove(conn);
+        if sessions.is_empty() {
+            self.remove_user(uuid).await;
+        }
+    }
+
+    async fn reconnect(&mut self, conn: ConnId, uuid: Uuid) -> Vec<ServerMessage> {
+        let mut result = Vec::new();
+        let rooms: Vec<RoomId> = self
             .matches
             .iter()
-            .filter_map(|(room_id, _)| self.get_match_info(*room_id))
+            .filter_map(|(room_id, room)| {
+                if !room.contains(uuid) && room.is_player(uuid) {
+                    Some(*room_id)
+                } else {
+                    None
+                }
+            })
             .collect();
+        for room_id in rooms {
+            if let Some(msg) = self.join_viewers_match_room(room_id, conn, uuid).await {
+                result.push(msg);
+            }
+        }
         result
     }
 
@@ -650,9 +680,19 @@ impl MatchServer {
                         Command::CreateMatchRoom{uuid, res_tx} => {
                             let result = self.create_match_room(uuid).await;
                             let _ = res_tx.send(result);
-                        }
+                        },
 
-                        _ => {}
+                        Command::ListMatchRoom{ res_tx } => {
+                            let result = self.list_match_room().await;
+                            let _ = res_tx.send(result);
+                        },
+
+                        Command::GetMatchRoom{ room, res_tx } => {},
+
+                        Command::Reconnect{ conn, uuid, res_tx } => {
+                            let result = self.reconnect(conn, uuid).await;
+                            let _ = res_tx.send(result);
+                        }
                     }
                 }
 
@@ -704,18 +744,7 @@ impl MatchServer {
             .collect();
 
         for uuid in dead_users {
-            self.waitings.remove(&uuid);
-            self.sessions.remove(&uuid);
-            for room_id in self.matches.iter().filter_map(|(room_id, room)| {
-                if room.contains(uuid) {
-                    Some(*room_id)
-                } else {
-                    None
-                }
-            }) {
-                let msg = ServerMessage::leave_message(uuid, room_id);
-                self.broadcast_message(room_id, &msg).await;
-            }
+            self.remove_user(uuid).await;
         }
     }
 
@@ -741,7 +770,7 @@ pub struct MatchServerHandle {
 }
 
 impl MatchServerHandle {
-    pub async fn connect(&self, uuid: i32, conn_tx: mpsc::UnboundedSender<String>) -> ConnId {
+    pub async fn connect(&self, uuid: Uuid, conn_tx: mpsc::UnboundedSender<String>) -> ConnId {
         let (res_tx, res_rx) = oneshot::channel();
 
         self.cmd_tx
@@ -851,6 +880,22 @@ impl MatchServerHandle {
                 uuid,
                 res_tx,
             })
+            .unwrap();
+        res_rx.await.unwrap()
+    }
+
+    pub async fn list_match_room(&self) -> Vec<MatchInfo> {
+        let (res_tx, res_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::ListMatchRoom { res_tx })
+            .unwrap();
+        res_rx.await.unwrap()
+    }
+
+    pub async fn reconnect(&self, conn: ConnId, uuid: Uuid) -> Vec<ServerMessage> {
+        let (res_tx, res_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::Reconnect { conn, uuid, res_tx })
             .unwrap();
         res_rx.await.unwrap()
     }

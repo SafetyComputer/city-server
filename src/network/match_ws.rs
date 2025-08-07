@@ -1,5 +1,5 @@
 use actix_identity::Identity;
-use actix_web::{get, web, HttpRequest, HttpResponse, Responder};
+use actix_web::{HttpRequest, HttpResponse, Responder, get, web};
 
 use super::user::identity_to_user;
 use crate::data::Dbpool;

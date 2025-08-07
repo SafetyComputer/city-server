@@ -32,6 +32,7 @@ enum Command {
     CreateMatchRoom,
     JoinPlayers,
     JoinViewers,
+    Reconnect,
 }
 
 #[derive(Serialize)]
@@ -216,23 +217,28 @@ async fn process_text_msg(
                     ServerMessage::success_message("successfully sent message", msg.command_id);
                 let _ = session.text(msg.to_string()).await;
             }
+
             Command::StartMatching => {
                 match_server.start_matching(uuid).await;
                 let msg =
                     ServerMessage::success_message("successfully started matching", msg.command_id);
                 let _ = session.text(msg.to_string()).await;
             }
+
             Command::StopMatching => {
                 match_server.stop_matching(uuid).await;
                 let msg =
                     ServerMessage::success_message("successfully stopped matching", msg.command_id);
                 let _ = session.text(msg.to_string()).await;
             }
+
             Command::Move => {
                 let mv = serde_json::from_str(msg.data.unwrap().as_str());
                 match mv {
                     Ok(mv) => {
-                        let result = match_server.make_move(mv, msg.room.unwrap(), conn, uuid).await;
+                        let result = match_server
+                            .make_move(mv, msg.room.unwrap(), conn, uuid)
+                            .await;
                         let msg = if result.success {
                             ServerMessage::success_message("successfully made move", msg.command_id)
                         } else {
@@ -245,6 +251,7 @@ async fn process_text_msg(
                             );
                         }
                     }
+
                     Err(_) => {
                         let _ = session
                             .text(
@@ -255,11 +262,13 @@ async fn process_text_msg(
                     }
                 }
             }
+
             Command::CreateMatchRoom => {
                 let room_id = match_server.create_match_room(uuid).await;
                 let msg = ServerMessage::success_message(format!("{room_id}"), msg.command_id);
                 let _ = session.text(msg.to_string()).await;
             }
+
             Command::JoinPlayers => {
                 let room_id = msg.room.unwrap();
                 let result = match_server.join_players(room_id, conn, uuid).await;
@@ -272,6 +281,7 @@ async fn process_text_msg(
                         let _ = session.text(msg.to_string()).await;
                         let _ = session.text(match_message.to_string()).await;
                     }
+
                     None => {
                         let msg = ServerMessage::error_message(
                             format!("failed to join room {} as player", room_id),
@@ -281,6 +291,7 @@ async fn process_text_msg(
                     }
                 }
             }
+
             Command::JoinViewers => {
                 let room_id = msg.room.unwrap();
                 let result = match_server.join_viewers(room_id, conn, uuid).await;
@@ -293,6 +304,7 @@ async fn process_text_msg(
                         let _ = session.text(msg.to_string()).await;
                         let _ = session.text(match_message.to_string()).await;
                     }
+
                     None => {
                         let msg = ServerMessage::error_message(
                             format!("failed to join room {} as viewer", room_id),
@@ -300,6 +312,18 @@ async fn process_text_msg(
                         );
                         let _ = session.text(msg.to_string()).await;
                     }
+                }
+            }
+
+            Command::Reconnect => {
+                let result = match_server.reconnect(conn, uuid).await;
+                let msg = ServerMessage::success_message(
+                    format!("successfully reconnected to {} rooms", result.len()),
+                    msg.command_id,
+                );
+                let _ = session.text(msg.to_string()).await;
+                for msg in result {
+                    let _ = session.text(msg.to_string()).await;
                 }
             }
         }
