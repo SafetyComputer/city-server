@@ -1,5 +1,6 @@
 use std::{env, io};
 
+use actix_rt;
 use actix_cors::Cors;
 use actix_identity::IdentityMiddleware;
 use actix_session::{SessionMiddleware, config::PersistentSession, storage::CookieSessionStore};
@@ -20,7 +21,7 @@ fn get_secret_key(key_raw: &String) -> Key {
     Key::from(&key)
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").unwrap();
@@ -54,7 +55,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(
                 SessionMiddleware::builder(CookieSessionStore::default(), key.clone())
                     .cookie_name("auth".to_owned())
-                    .cookie_secure(false)
+                    .cookie_secure(true)
                     .cookie_same_site(actix_web::cookie::SameSite::None)
                     .session_lifecycle(
                         PersistentSession::default()
