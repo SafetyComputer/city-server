@@ -27,8 +27,10 @@ fn get_tls_config(tls_path: String) -> ServerConfig {
         .install_default()
         .unwrap();
 
-    let mut certs_file = std::io::BufReader::new(std::fs::File::open(tls_path.clone() + "/cert.pem").unwrap());
-    let mut key_file = std::io::BufReader::new(std::fs::File::open(tls_path.clone() + "/key.pem").unwrap());
+    let mut certs_file =
+        std::io::BufReader::new(std::fs::File::open(tls_path.clone() + "/cert.pem").unwrap());
+    let mut key_file =
+        std::io::BufReader::new(std::fs::File::open(tls_path.clone() + "/key.pem").unwrap());
 
     // load TLS certs and key
     // to create a self-signed temporary cert for testing:
@@ -90,7 +92,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(
                 SessionMiddleware::builder(CookieSessionStore::default(), key.clone())
                     .cookie_name("auth".to_owned())
-                    .cookie_secure(true)
+                    .cookie_secure(false)
                     .cookie_same_site(actix_web::cookie::SameSite::None)
                     .session_lifecycle(
                         PersistentSession::default()

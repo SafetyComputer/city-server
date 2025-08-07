@@ -72,7 +72,7 @@ pub async fn login(
 }
 
 // 登出处理
-#[get("/logout")]
+#[post("/logout")]
 pub async fn logout(identity: Option<Identity>) -> impl Responder {
     match identity {
         Some(identity) => {
