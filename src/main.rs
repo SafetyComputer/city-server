@@ -50,18 +50,19 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .app_data(web::Data::new(server_tx.clone()))
-            .wrap(Cors::permissive())
             .wrap(IdentityMiddleware::default())
             .wrap(
                 SessionMiddleware::builder(CookieSessionStore::default(), key.clone())
                     .cookie_name("auth".to_owned())
                     .cookie_secure(false)
+                    .cookie_same_site(actix_web::cookie::SameSite::None)
                     .session_lifecycle(
                         PersistentSession::default()
-                            .session_ttl(actix_web::cookie::time::Duration::hours(3)),
+                            .session_ttl(actix_web::cookie::time::Duration::days(30)),
                     )
                     .build(),
             )
+            .wrap(Cors::permissive())
             .service(network::login)
             .service(network::logout)
             .service(network::post_user)
