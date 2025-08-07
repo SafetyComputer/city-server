@@ -92,7 +92,7 @@ async fn main() -> std::io::Result<()> {
             .wrap(
                 SessionMiddleware::builder(CookieSessionStore::default(), key.clone())
                     .cookie_name("auth".to_owned())
-                    .cookie_secure(false)
+                    .cookie_secure(true)
                     .cookie_same_site(actix_web::cookie::SameSite::None)
                     .session_lifecycle(
                         PersistentSession::default()

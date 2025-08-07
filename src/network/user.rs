@@ -73,9 +73,14 @@ pub async fn login(
 
 // 登出处理
 #[post("/logout")]
-pub async fn logout(identity: Identity) -> impl Responder {
-    identity.logout();
-    HttpResponse::Ok().json("success")
+pub async fn logout(identity: Option<Identity>) -> impl Responder {
+    match identity {
+        Some(identity) => {
+            identity.logout();
+            HttpResponse::Ok().json("success")
+        }
+        None => HttpResponse::Unauthorized().json("haven't logged in"),
+    }
 }
 
 // 获取用户信息
