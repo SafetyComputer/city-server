@@ -51,7 +51,7 @@ pub async fn login(
     identity: Option<Identity>,
     db: web::Data<Dbpool>,
     user_info: web::Json<UserPost>,
-) -> HttpResponse {
+) -> impl Responder {
     if identity.is_some() {
         return HttpResponse::Unauthorized().json("already logged in");
     }

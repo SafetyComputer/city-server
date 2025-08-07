@@ -1,5 +1,5 @@
 use actix_identity::Identity;
-use actix_web::{HttpRequest, HttpResponse, get, web};
+use actix_web::{get, web, HttpRequest, HttpResponse, Responder};
 
 use super::user::identity_to_user;
 use crate::data::Dbpool;
@@ -25,3 +25,12 @@ async fn get_match_ws(
 
     Ok(res)
 }
+
+// #[get("room")]
+// async fn get_room(
+//     req: HttpRequest,
+//     match_server: web::Data<MatchServerHandle>,
+//     _: Identity
+// ) -> impl Responder {
+
+// }
