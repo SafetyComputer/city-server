@@ -17,11 +17,6 @@ pub type RoomId = u64;
 
 pub type Uuid = i32;
 
-pub struct JoinRoomResult {
-    pub opponent_id: i32,
-    pub self_color: Color,
-}
-
 #[derive(Clone, Copy)]
 pub enum Color {
     Blue,
