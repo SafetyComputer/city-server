@@ -111,13 +111,13 @@ impl Sessions {
         }
     }
 
-    fn send_with_skip(&self, message: String, skip: ConnId) {
-        for (conn_id, tx) in &self.inner {
-            if *conn_id != skip {
-                let _ = tx.send(message.clone());
-            }
-        }
-    }
+    // fn send_with_skip(&self, message: String, skip: ConnId) {
+    //     for (conn_id, tx) in &self.inner {
+    //         if *conn_id != skip {
+    //             let _ = tx.send(message.clone());
+    //         }
+    //     }
+    // }
 
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
@@ -439,9 +439,16 @@ impl MatchServer {
         )
     }
 
+    fn contains(&self, uuid: Uuid) -> bool {
+        match self.sessions.get(&uuid) {
+            Some(sessions) => !sessions.is_empty(),
+            None => false,
+        }
+    }
+
     fn get_match_info(&self, room_id: RoomId) -> Option<MatchInfo> {
         if let Some(room) = self.matches.get(&room_id)
-            && !room.is_empty()
+            && !room.is_empty() && !room.ended
         {
             let game_history = room.game.history.clone();
             let info = MatchInfo {
@@ -457,12 +464,7 @@ impl MatchServer {
         }
     }
 
-    async fn send_message_in_room(
-        &self,
-        room: RoomId,
-        uuid: Uuid,
-        msg: &ServerMessage,
-    ) {
+    async fn send_message_in_room(&self, room: RoomId, uuid: Uuid, msg: &ServerMessage) {
         if let Some(room) = self.matches.get(&room) {
             if !room.contains(uuid) {
                 return;
@@ -564,6 +566,9 @@ impl MatchServer {
     }
 
     async fn join_players_match_room(&mut self, room_id: RoomId, uuid: Uuid) -> Option<MatchInfo> {
+        if !self.contains(uuid) {
+            return None;
+        }
         let room = self.matches.get_mut(&room_id);
         match room {
             Some(room) => {
@@ -584,6 +589,9 @@ impl MatchServer {
     }
 
     async fn join_viewers_match_room(&mut self, room_id: RoomId, uuid: Uuid) -> Option<MatchInfo> {
+        if !self.contains(uuid) {
+            return None;
+        }
         let room = self.matches.get_mut(&room_id);
         match room {
             Some(room) => {
@@ -593,19 +601,19 @@ impl MatchServer {
                     self.broadcast_message(room_id, &msg).await;
                     Some(info)
                 } else {
-                    None
+                    let info = self.get_match_info(room_id).unwrap();
+                    Some(info)
                 }
             }
             None => None,
         }
     }
 
-    async fn make_move(
-        &mut self,
-        mv: Move,
-        room_id: RoomId,
-        uuid: Uuid,
-    ) -> bool {
+    async fn make_move(&mut self, mv: Move, room_id: RoomId, uuid: Uuid) -> bool {
+        if !self.contains(uuid) {
+            return false;
+        }
+
         let room = self.matches.get_mut(&room_id);
 
         if room.is_none() {
@@ -664,7 +672,7 @@ impl MatchServer {
             .matches
             .iter()
             .filter_map(|(room_id, room)| {
-                if !room.contains(uuid) && room.is_player(uuid) {
+                if room.is_player(uuid) {
                     Some(*room_id)
                 } else {
                     None
@@ -857,12 +865,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn send_message(
-        &self,
-        room: RoomId,
-        uuid: Uuid,
-        msg: impl Into<String>,
-    ) {
+    pub async fn send_message(&self, room: RoomId, uuid: Uuid, msg: impl Into<String>) {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Message {
