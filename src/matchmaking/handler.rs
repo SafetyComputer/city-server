@@ -111,7 +111,7 @@ impl ServerMessage {
         }
     }
 
-    pub fn end_message(room: RoomId, winner: Winner) -> Self {
+    pub fn end_message(room: RoomId, winner: Option<Winner>) -> Self {
         Self {
             message_type: MessageType::End,
             room: Some(room),
@@ -229,7 +229,7 @@ async fn process_text_msg(
                         let _ = session.text(msg.to_string()).await;
                         if let Some(winner) = result.winner {
                             let _ = session.text(
-                                ServerMessage::end_message(msg.room.unwrap(), winner).to_string(),
+                                ServerMessage::end_message(msg.room.unwrap(), Some(winner)).to_string(),
                             ).await;
                         }
                     }

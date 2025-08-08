@@ -3,11 +3,23 @@ use std::{
     io,
 };
 
+use actix_web::web;
+use diesel::{
+    Connection, ExpressionMethods as _, RunQueryDsl,
+    dsl::{insert_into, update},
+    query_dsl::methods::FindDsl,
+};
 use rand::Rng;
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::game::logic::{Game, Move, Winner};
+use crate::{
+    data::{
+        Dbpool,
+        models::{Match, User},
+    },
+    game::logic::{Game, Move, Winner},
+};
 
 use super::handler::ServerMessage;
 
@@ -16,6 +28,17 @@ pub type ConnId = u64;
 pub type RoomId = u64;
 
 pub type Uuid = i32;
+
+fn elo_update(winner_elo: i32, loser_elo: i32) -> (i32, i32) {
+    let expected_winner =
+        1_f32 / (1_f32 + 10_f32.powf((loser_elo as f32 - winner_elo as f32) / 400 as f32));
+    let expected_loser = 1_f32 - expected_winner;
+
+    (
+        (winner_elo as f32 + 32_f32 * (1_f32 - expected_winner)).round() as i32,
+        (loser_elo as f32 + 32_f32 * (0_f32 - expected_loser)).round() as i32,
+    )
+}
 
 #[derive(Clone, Copy)]
 pub enum Color {
@@ -146,6 +169,8 @@ struct MatchRoom {
     game: Game,
     players: Players,
     viewers: HashSet<Uuid>,
+    ended: bool,
+    winner: Option<Winner>,
 }
 
 impl MatchRoom {
@@ -161,6 +186,8 @@ impl MatchRoom {
             game: Game::new(7, 7),
             players: Players { blue, green },
             viewers,
+            ended: false,
+            winner: None,
         }
     }
 
@@ -229,6 +256,95 @@ impl MatchRoom {
 
     fn is_empty(&self) -> bool {
         self.players.blue.is_none() && self.players.green.is_none()
+    }
+
+    fn save(self, db: web::Data<Dbpool>) -> Result<(), diesel::result::Error> {
+        use crate::data::schema::matches;
+        use crate::data::schema::users;
+        let conn = &mut db.get_connection();
+        let blue_id = self.players.blue.unwrap();
+        let green_id = self.players.green.unwrap();
+        let player_blue: User = users::table.find(blue_id).first(conn)?;
+        let player_green: User = users::table.find(green_id).first(conn)?;
+        let result = Match {
+            id: None,
+            player_blue: blue_id,
+            player_green: green_id,
+            winner: serde_json::to_string(&self.winner).unwrap(),
+            history: serde_json::to_string(&self.game.history).unwrap(),
+        };
+        conn.transaction(|conn| {
+            match self.winner {
+                Some(Winner::Blue) => {
+                    let (winner_elo, loser_elo) = elo_update(player_blue.elo, player_green.elo);
+                    update(users::table.find(blue_id))
+                        .set(users::dsl::elo.eq(winner_elo))
+                        .execute(conn)?;
+                    update(users::table.find(green_id))
+                        .set(users::dsl::elo.eq(loser_elo))
+                        .execute(conn)?;
+                }
+                Some(Winner::Green) => {
+                    let (winner_elo, loser_elo) = elo_update(player_green.elo, player_blue.elo);
+                    update(users::table.find(blue_id))
+                        .set(users::dsl::elo.eq(loser_elo))
+                        .execute(conn)?;
+                    update(users::table.find(green_id))
+                        .set(users::dsl::elo.eq(winner_elo))
+                        .execute(conn)?;
+                }
+                _ => {}
+            }
+            insert_into(matches::table).values(result).execute(conn)?;
+            Ok(())
+        })
+    }
+
+    fn make_move(&mut self, mv: Move, uuid: Uuid) -> MoveResult {
+        let success = {
+            if self.game.game_over() {
+                false
+            } else {
+                let color = self.players.get_color(uuid);
+                match color {
+                    None => false,
+
+                    Some(Color::Blue) => {
+                        if self.game.blue_turn {
+                            self.game.make_move(mv, true)
+                        } else {
+                            false
+                        }
+                    }
+
+                    Some(Color::Green) => {
+                        if !self.game.blue_turn {
+                            self.game.make_move(mv, true)
+                        } else {
+                            false
+                        }
+                    }
+                }
+            }
+        };
+
+        let game_over = self.game.game_over();
+        let result = if game_over {
+            self.ended = true;
+            let (winner, _) = self.game.game_result();
+            self.winner = Some(winner);
+            MoveResult {
+                success,
+                winner: Some(winner),
+            }
+        } else {
+            MoveResult {
+                success,
+                winner: None,
+            }
+        };
+
+        result
     }
 }
 
@@ -306,12 +422,13 @@ pub struct MatchServer {
     sessions: HashMap<Uuid, Sessions>,
     matches: HashMap<RoomId, MatchRoom>,
     waitings: HashSet<Uuid>,
+    db: web::Data<Dbpool>,
     cmd_rx: mpsc::UnboundedReceiver<Command>,
     task_rx: mpsc::UnboundedReceiver<BackgroundTask>,
 }
 
 impl MatchServer {
-    pub fn new() -> (Self, MatchServerHandle) {
+    pub fn new(db: web::Data<Dbpool>) -> (Self, MatchServerHandle) {
         let matches = HashMap::with_capacity(4);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (task_tx, task_rx) = mpsc::unbounded_channel();
@@ -321,6 +438,7 @@ impl MatchServer {
                 sessions: HashMap::new(),
                 matches,
                 waitings: HashSet::new(),
+                db,
                 cmd_rx,
                 task_rx,
             },
@@ -499,56 +617,15 @@ impl MatchServer {
         }
 
         let room = room.unwrap();
-        let success = {
-            if room.game.game_over() {
-                false
-            } else {
-                let color = room.players.get_color(uuid);
-                match color {
-                    None => false,
+        let result = room.make_move(mv, uuid);
 
-                    Some(Color::Blue) => {
-                        if room.game.blue_turn {
-                            
-                            room.game.make_move(mv, true)
-                        } else {
-                            false
-                        }
-                    }
-
-                    Some(Color::Green) => {
-                        if !room.game.blue_turn {
-                            
-                            room.game.make_move(mv, true)
-                        } else {
-                            false
-                        }
-                    }
-                }
-            }
-        };
-
-        let game_over = room.game.game_over();
-        let result = if game_over {
-            let (winner, _) = room.game.game_result();
-            MoveResult {
-                success,
-                winner: Some(winner),
-            }
-        } else {
-            MoveResult {
-                success,
-                winner: None,
-            }
-        };
-
-        if success {
+        if result.success {
             let msg = ServerMessage::move_message(&mv, room_id);
             self.send_message_in_room(room_id, conn, uuid, &msg).await;
         }
 
         if let Some(winner) = result.winner {
-            let msg = ServerMessage::end_message(room_id, winner);
+            let msg = ServerMessage::end_message(room_id, Some(winner));
             self.send_message_in_room(room_id, conn, uuid, &msg).await;
         }
 
@@ -736,9 +813,22 @@ impl MatchServer {
             .collect();
 
         for room_id in empty_rooms {
-            let msg = ServerMessage::end_message(room_id, Winner::Draw);
+            let msg = ServerMessage::end_message(room_id, None);
             self.broadcast_message(room_id, &msg).await;
             self.matches.remove(&room_id);
+        }
+
+        let ended_rooms: Vec<RoomId> = self
+            .matches
+            .iter()
+            .filter_map(|(id, room)| if room.ended { Some(*id) } else { None })
+            .collect();
+
+        for room_id in ended_rooms {
+            let room = self.matches.remove(&room_id);
+            if let Some(room) = room {
+                let _ = room.save(self.db.clone());
+            }
         }
     }
 }
@@ -852,7 +942,9 @@ impl MatchServerHandle {
 
     pub async fn get_match_room_by_id(&self, room: RoomId) -> Option<MatchInfo> {
         let (res_tx, res_rx) = oneshot::channel();
-        self.cmd_tx.send(Command::GetMatchRoomById { room, res_tx }).unwrap();
+        self.cmd_tx
+            .send(Command::GetMatchRoomById { room, res_tx })
+            .unwrap();
         res_rx.await.unwrap()
     }
 

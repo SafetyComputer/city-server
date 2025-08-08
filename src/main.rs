@@ -44,7 +44,6 @@ fn get_tls_config(tls_path: String) -> ServerConfig {
         .unwrap();
 
     // set up TLS config options
-    
 
     rustls::ServerConfig::builder()
         .with_no_client_auth()
@@ -61,7 +60,7 @@ async fn main() -> std::io::Result<()> {
     let key_raw = env::var("KEY").unwrap();
     let key = get_secret_key(&key_raw);
 
-    let (match_server, server_tx) = MatchServer::new();
+    let (match_server, server_tx) = MatchServer::new(actix_web::web::Data::new(pool.clone()));
     let background_tx = server_tx.clone();
     let match_server = tokio::task::spawn(match_server.run());
     let match_server_background = tokio::task::spawn(async move {

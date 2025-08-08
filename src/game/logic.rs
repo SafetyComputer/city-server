@@ -226,7 +226,7 @@ pub struct Score {
     green: i32,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize)]
+#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
 pub enum Winner {
     Blue,
     Green,
