@@ -1,4 +1,4 @@
 pub mod handler;
 pub mod service;
 
-pub use service::{BACKGROUND_TASKS, ConnId, MatchInfo, MatchServer, MatchServerHandle, RoomId};
+pub use service::{ConnId, MatchInfo, MatchServer, MatchServerHandle, RoomId};

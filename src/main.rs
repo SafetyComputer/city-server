@@ -5,10 +5,11 @@ use actix_identity::IdentityMiddleware;
 use actix_rt;
 use actix_session::{SessionMiddleware, config::PersistentSession, storage::CookieSessionStore};
 use actix_web::{App, HttpServer, cookie::Key, web};
+use city_server::matchmaking::service::BackgroundTask;
 use dotenvy::dotenv;
 use futures_util::try_join;
 
-use city_server::matchmaking::{BACKGROUND_TASKS, MatchServer};
+use city_server::matchmaking::MatchServer;
 use city_server::network;
 use rustls::ServerConfig;
 
@@ -65,16 +66,28 @@ async fn main() -> std::io::Result<()> {
     let background_tx = server_tx.clone();
     let match_server = tokio::task::spawn(match_server.run());
     let match_server_background = tokio::task::spawn(async move {
-        let mut interval = tokio::time::interval(core::time::Duration::from_secs(1));
-        let mut next_task = 2;
+        let mut match_interval = tokio::time::interval(core::time::Duration::from_secs(1));
+        let mut check_connection_interval =
+            tokio::time::interval(core::time::Duration::from_secs(300));
+        let mut check_matches_interval = tokio::time::interval(core::time::Duration::from_secs(30));
         loop {
-            interval.tick().await;
-            let result = background_tx.schedule_background_task(BACKGROUND_TASKS[next_task]);
-            match result {
-                Ok(_) => next_task = (next_task + 1) % 3,
-                Err(_) => break,
+            let result = tokio::select! {
+                _ = match_interval.tick() => {
+                    background_tx.schedule_background_task(BackgroundTask::MatchPlayers)
+                }
+
+                _ = check_connection_interval.tick() => {
+                    background_tx.schedule_background_task(BackgroundTask::CheckConnections)
+                }
+
+                _ = check_matches_interval.tick() => {
+                    background_tx.schedule_background_task(BackgroundTask::CheckMatches)
+                }
+            };
+            if let Err(_) = result {
+                break;
             }
-        }
+        };
         return io::Result::<()>::Err(io::Error::new(
             io::ErrorKind::AddrNotAvailable,
             "closed connection",
@@ -108,7 +121,7 @@ async fn main() -> std::io::Result<()> {
             .service(network::get_match_ws)
     })
     .bind_rustls_0_23("0.0.0.0:8088", tls_config)?
-    //.bind("0.0.0.0:8088")?
+    // .bind("0.0.0.0:8088")?
     .run();
     try_join!(
         http_server,

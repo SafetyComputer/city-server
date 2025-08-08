@@ -30,12 +30,6 @@ pub enum BackgroundTask {
     CheckMatches,
 }
 
-pub const BACKGROUND_TASKS: [BackgroundTask; 3] = [
-    BackgroundTask::MatchPlayers,
-    BackgroundTask::CheckConnections,
-    BackgroundTask::CheckConnections,
-];
-
 struct Players {
     blue: Option<Uuid>,
     green: Option<Uuid>,
