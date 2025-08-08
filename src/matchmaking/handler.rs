@@ -9,22 +9,12 @@ use serde::{Deserialize, Serialize};
 use tokio::{sync::mpsc, time::interval};
 
 use crate::{
-    data::models::User,
     game::{Move, Winner},
-    matchmaking::service::{ConnId, MatchInfo, MatchServerHandle, RoomId, Uuid},
+    matchmaking::service::{MatchInfo, MatchServerHandle, RoomId, Uuid},
 };
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
-type CommandId = u64;
-
-#[derive(Deserialize)]
-struct UserMessage {
-    command: Command,
-    command_id: CommandId,
-    room: Option<RoomId>,
-    data: Option<String>,
-}
 
 #[derive(Deserialize)]
 enum Command {
@@ -40,15 +30,7 @@ pub struct ServerMessage {
 }
 
 #[derive(Serialize)]
-struct CommandReturn {
-    command_id: CommandId,
-    data: String,
-}
-
-#[derive(Serialize)]
 pub enum MessageType {
-    Success,
-    Error,
     Chat,
     Move,
     Match,
@@ -63,30 +45,6 @@ impl ServerMessage {
             message_type: MessageType::Match,
             room: Some(room),
             data: serde_json::to_string(info).unwrap(),
-        }
-    }
-
-    pub fn success_message(msg: impl Into<String>, command_id: CommandId) -> Self {
-        let ret = CommandReturn {
-            command_id,
-            data: msg.into(),
-        };
-        Self {
-            message_type: MessageType::Success,
-            room: None,
-            data: serde_json::to_string(&ret).unwrap(),
-        }
-    }
-
-    pub fn error_message(msg: impl Into<String>, command_id: CommandId) -> Self {
-        let ret = CommandReturn {
-            command_id,
-            data: msg.into(),
-        };
-        Self {
-            message_type: MessageType::Error,
-            room: None,
-            data: serde_json::to_string(&ret).unwrap(),
         }
     }
 
@@ -139,12 +97,10 @@ impl Display for ServerMessage {
 
 pub async fn match_ws(
     match_server: MatchServerHandle,
-    user: User,
+    uuid: Uuid,
     mut session: actix_ws::Session,
     msg_stream: actix_ws::MessageStream,
 ) {
-    let uuid = user.id.unwrap();
-    let name: String = user.username;
     let mut last_heartbeat = Instant::now();
     let mut interval = interval(HEARTBEAT_INTERVAL);
 
@@ -168,9 +124,7 @@ pub async fn match_ws(
                     AggregatedMessage::Pong(_) => {
                         last_heartbeat = Instant::now();
                     }
-                    AggregatedMessage::Text(text) => {
-                        process_text_msg(&match_server, &mut session, &text, conn_id, uuid, &name)
-                            .await;
+                    AggregatedMessage::Text(_text) => {
                     }
                     AggregatedMessage::Binary(_bin) => {
                     }
@@ -194,65 +148,4 @@ pub async fn match_ws(
 
     match_server.disconnect(conn_id, uuid);
     let _ = session.close(close_reason).await;
-}
-
-async fn process_text_msg(
-    match_server: &MatchServerHandle,
-    session: &mut actix_ws::Session,
-    text: &str,
-    conn: ConnId,
-    uuid: Uuid,
-    name: &String,
-) {
-    let msg = text.trim();
-    if let Ok(msg) = serde_json::from_str::<UserMessage>(msg) {
-        match msg.command {
-            Command::SendMessage => {
-                let user_msg = format!("{name}: {}", msg.data.unwrap());
-                match_server
-                    .send_message(msg.room.unwrap(), conn, uuid, user_msg)
-                    .await;
-                let msg =
-                    ServerMessage::success_message("successfully sent message", msg.command_id);
-                let _ = session.text(msg.to_string()).await;
-            }
-
-            Command::Move => {
-                let mv = serde_json::from_str(msg.data.unwrap().as_str());
-                match mv {
-                    Ok(mv) => {
-                        let result = match_server
-                            .make_move(mv, msg.room.unwrap(), conn, uuid)
-                            .await;
-                        let msg = if result.success {
-                            ServerMessage::success_message("successfully made move", msg.command_id)
-                        } else {
-                            ServerMessage::error_message("illegal move", msg.command_id)
-                        };
-                        let _ = session.text(msg.to_string()).await;
-                        if let Some(winner) = result.winner {
-                            let _ = session
-                                .text(
-                                    ServerMessage::end_message(msg.room.unwrap(), Some(winner))
-                                        .to_string(),
-                                )
-                                .await;
-                        }
-                    }
-
-                    Err(_) => {
-                        let _ = session
-                            .text(
-                                ServerMessage::error_message("invalid move notion", msg.command_id)
-                                    .to_string(),
-                            )
-                            .await;
-                    }
-                }
-            }
-        }
-    } else {
-        let msg = ServerMessage::error_message("invalid message".to_string(), 0);
-        let _ = session.text(msg.to_string()).await;
-    }
 }

@@ -1,12 +1,13 @@
 use actix_identity::Identity;
 use actix_web::{
     HttpResponse, Responder, get, patch, post,
-    web::{self, Json, Query},
+    web::{Data, Json, Path, Query},
 };
 use serde::Deserialize;
 
 use crate::{
     data::Dbpool,
+    game::Move,
     matchmaking::{MatchServerHandle, RoomId},
     web::user::identity_to_user,
 };
@@ -16,10 +17,22 @@ struct RoomQuery {
     room_id: Option<RoomId>,
 }
 
+#[derive(Deserialize)]
+struct MovePost {
+    room_id: RoomId,
+    mv: Move,
+}
+
+#[derive(Deserialize)]
+struct  ChatPost {
+    room_id: RoomId,
+    message: String
+}
+
 #[get("/room")]
 async fn get_room(
     _: Identity,
-    handle: web::Data<MatchServerHandle>,
+    handle: Data<MatchServerHandle>,
     room_info: Query<RoomQuery>,
 ) -> impl Responder {
     if let Some(room_id) = room_info.room_id {
@@ -37,8 +50,8 @@ async fn get_room(
 #[post("/room")]
 async fn post_room(
     identity: Identity,
-    db: web::Data<Dbpool>,
-    handle: web::Data<MatchServerHandle>,
+    db: Data<Dbpool>,
+    handle: Data<MatchServerHandle>,
 ) -> impl Responder {
     let user = identity_to_user(identity, db).await;
     match user {
@@ -50,13 +63,54 @@ async fn post_room(
     }
 }
 
+#[post("/room/move")]
+async fn post_room_move(
+    identity: Identity,
+    db: Data<Dbpool>,
+    handle: Data<MatchServerHandle>,
+    move_info: Json<MovePost>,
+) -> impl Responder {
+    let user = identity_to_user(identity, db).await;
+    match user {
+        Ok(user) => {
+            let result = handle
+                .make_move(move_info.mv, move_info.room_id, user.id.unwrap())
+                .await;
+            if result {
+                HttpResponse::Ok().json("success")
+            } else {
+                HttpResponse::BadRequest().json("invalid move")
+            }
+        }
+        Err(e) => e,
+    }
+}
+
+#[post("/room/chat")]
+async fn post_room_chat(
+    identity: Identity,
+    db: Data<Dbpool>,
+    handle: Data<MatchServerHandle>,
+    chat_info: Json<ChatPost>,
+) -> impl Responder {
+    let user = identity_to_user(identity, db).await;
+    match user {
+        Ok(user) => {
+            let msg = user.username.clone() + ": " + chat_info.message.clone().as_str();
+            handle.send_message(chat_info.room_id, user.id.unwrap(), msg).await;
+            HttpResponse::Ok().json("success")
+        }
+        Err(e) => e,
+    }
+}
+
 #[patch("/room/join/{join_as}")]
 async fn patch_room_join(
     identity: Identity,
-    db: web::Data<Dbpool>,
-    handle: web::Data<MatchServerHandle>,
+    db: Data<Dbpool>,
+    handle: Data<MatchServerHandle>,
     room_info: Json<RoomQuery>,
-    path: web::Path<String>,
+    path: Path<String>,
 ) -> impl Responder {
     let user = identity_to_user(identity, db).await;
     let join_as = path.into_inner();
@@ -89,8 +143,8 @@ async fn patch_room_join(
 #[patch("/room/leave")]
 async fn patch_room_leave(
     identity: Identity,
-    db: web::Data<Dbpool>,
-    handle: web::Data<MatchServerHandle>,
+    db: Data<Dbpool>,
+    handle: Data<MatchServerHandle>,
     room_info: Json<RoomQuery>,
 ) -> impl Responder {
     let user = identity_to_user(identity, db).await;
@@ -108,8 +162,8 @@ async fn patch_room_leave(
 #[get("/reconnect")]
 async fn reconnect(
     identity: Identity,
-    db: web::Data<Dbpool>,
-    handle: web::Data<MatchServerHandle>,
+    db: Data<Dbpool>,
+    handle: Data<MatchServerHandle>,
 ) -> impl Responder {
     let user = identity_to_user(identity, db).await;
     match user {

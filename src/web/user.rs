@@ -128,10 +128,10 @@ pub async fn post_user(db: web::Data<Dbpool>, user_info: web::Json<UserPost>) ->
         let new_user = user_info.into_inner().into_user();
         match insert_into(users).values(&new_user).execute(conn) {
             Ok(_) => HttpResponse::Ok().json("success"),
-            Err(_) => HttpResponse::InternalServerError().json("server database error"),
+            Err(e) => HttpResponse::InternalServerError().json(format!("server database error {e}")),
         }
     } else {
-        HttpResponse::Forbidden().json("user already exist")
+        HttpResponse::BadRequest().json("user already exist")
     }
 }
 

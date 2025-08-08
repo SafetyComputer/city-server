@@ -18,7 +18,7 @@ async fn get_match_ws(
     let user = identity_to_user(identity, db).await.unwrap();
     tokio::task::spawn_local(matchmaking::handler::match_ws(
         (**match_server).clone(),
-        user,
+        user.id.unwrap(),
         session,
         msg_stream,
     ));

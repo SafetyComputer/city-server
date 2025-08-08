@@ -120,6 +120,8 @@ async fn main() -> std::io::Result<()> {
             .service(web::get_match_ws)
             .service(web::get_room)
             .service(web::post_room)
+            .service(web::post_room_move)
+            .service(web::post_room_chat)
             .service(web::patch_room_join)
             .service(web::patch_room_leave)
             .service(web::reconnect)

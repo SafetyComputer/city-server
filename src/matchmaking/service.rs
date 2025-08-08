@@ -100,11 +100,6 @@ impl Players {
     }
 }
 
-pub struct MoveResult {
-    pub success: bool,
-    pub winner: Option<Winner>,
-}
-
 struct Sessions {
     inner: HashMap<ConnId, mpsc::UnboundedSender<String>>,
 }
@@ -302,7 +297,7 @@ impl MatchRoom {
         })
     }
 
-    fn make_move(&mut self, mv: Move, uuid: Uuid) -> MoveResult {
+    fn make_move(&mut self, mv: Move, uuid: Uuid) -> bool {
         let success = {
             if self.game.game_over() {
                 false
@@ -336,16 +331,9 @@ impl MatchRoom {
             self.ended = true;
             let (winner, _) = self.game.game_result();
             self.winner = Some(winner);
-            MoveResult {
-                success,
-                winner: Some(winner),
-            }
-        } else {
-            MoveResult {
-                success,
-                winner: None,
-            }
         }
+
+        success
     }
 }
 
@@ -364,7 +352,6 @@ enum Command {
     Message {
         msg: String,
         room: RoomId,
-        conn: ConnId,
         uuid: Uuid,
         res_tx: oneshot::Sender<()>,
     },
@@ -382,9 +369,8 @@ enum Command {
     Move {
         mv: Move,
         room: RoomId,
-        conn: ConnId,
         uuid: Uuid,
-        res_tx: oneshot::Sender<MoveResult>,
+        res_tx: oneshot::Sender<bool>,
     },
 
     PlayerJoin {
@@ -474,7 +460,6 @@ impl MatchServer {
     async fn send_message_in_room(
         &self,
         room: RoomId,
-        conn: ConnId,
         uuid: Uuid,
         msg: &ServerMessage,
     ) {
@@ -485,7 +470,7 @@ impl MatchServer {
             let msg = serde_json::to_string(&msg).unwrap();
             for uuid in &room.viewers {
                 if let Some(sessions) = self.sessions.get(uuid) {
-                    sessions.send_with_skip(msg.clone(), conn);
+                    sessions.send(msg.clone());
                 }
             }
         }
@@ -619,29 +604,27 @@ impl MatchServer {
         &mut self,
         mv: Move,
         room_id: RoomId,
-        conn: ConnId,
         uuid: Uuid,
-    ) -> MoveResult {
+    ) -> bool {
         let room = self.matches.get_mut(&room_id);
 
         if room.is_none() {
-            return MoveResult {
-                success: false,
-                winner: None,
-            };
+            return false;
         }
 
         let room = room.unwrap();
         let result = room.make_move(mv, uuid);
 
-        if result.success {
+        let room = self.matches.get(&room_id).unwrap();
+
+        if result {
             let msg = ServerMessage::move_message(&mv, room_id);
-            self.send_message_in_room(room_id, conn, uuid, &msg).await;
+            self.send_message_in_room(room_id, uuid, &msg).await;
         }
 
-        if let Some(winner) = result.winner {
-            let msg = ServerMessage::end_message(room_id, Some(winner));
-            self.send_message_in_room(room_id, conn, uuid, &msg).await;
+        if room.ended {
+            let msg = ServerMessage::end_message(room_id, room.winner);
+            self.send_message_in_room(room_id, uuid, &msg).await;
         }
 
         result
@@ -715,9 +698,9 @@ impl MatchServer {
                             self.disconnect(conn, uuid).await;
                         }
 
-                        Command::Message { msg, room, conn, uuid, res_tx } => {
+                        Command::Message { msg, room, uuid, res_tx } => {
                             let msg = ServerMessage::chat_message(msg, room);
-                            self.send_message_in_room(room, conn, uuid, &msg).await;
+                            self.send_message_in_room(room, uuid, &msg).await;
                             let _ = res_tx.send(());
                         }
 
@@ -741,8 +724,8 @@ impl MatchServer {
                             let _ = res_tx.send(result);
                         }
 
-                        Command::Move {mv, room, conn, uuid, res_tx} => {
-                            let result = self.make_move(mv, room, conn, uuid).await;
+                        Command::Move {mv, room, uuid, res_tx} => {
+                            let result = self.make_move(mv, room, uuid).await;
                             let _ = res_tx.send(result);
                         },
 
@@ -877,7 +860,6 @@ impl MatchServerHandle {
     pub async fn send_message(
         &self,
         room: RoomId,
-        conn: ConnId,
         uuid: Uuid,
         msg: impl Into<String>,
     ) {
@@ -886,7 +868,6 @@ impl MatchServerHandle {
             .send(Command::Message {
                 msg: msg.into(),
                 room,
-                conn,
                 uuid,
                 res_tx,
             })
@@ -940,13 +921,12 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn make_move(&self, mv: Move, room: RoomId, conn: ConnId, uuid: Uuid) -> MoveResult {
+    pub async fn make_move(&self, mv: Move, room: RoomId, uuid: Uuid) -> bool {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Move {
                 mv,
                 room,
-                conn,
                 uuid,
                 res_tx,
             })
