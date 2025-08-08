@@ -291,9 +291,9 @@ enum Command {
         res_tx: oneshot::Sender<Vec<MatchInfo>>,
     },
 
-    GetMatchRoom {
+    GetMatchRoomById {
         room: RoomId,
-        res_tx: oneshot::Sender<Vec<MatchInfo>>,
+        res_tx: oneshot::Sender<Option<MatchInfo>>,
     },
 
     Reconnect {
@@ -664,7 +664,10 @@ impl MatchServer {
                             let _ = res_tx.send(result);
                         },
 
-                        Command::GetMatchRoom{ room, res_tx } => {},
+                        Command::GetMatchRoomById{ room, res_tx } => {
+                            let result = self.get_match_info(room);
+                            let _ = res_tx.send(result);
+                        },
 
                         Command::Reconnect{ uuid, res_tx } => {
                             let result = self.reconnect(uuid).await;
@@ -844,6 +847,12 @@ impl MatchServerHandle {
     pub async fn list_match_room(&self) -> Vec<MatchInfo> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx.send(Command::ListMatchRoom { res_tx }).unwrap();
+        res_rx.await.unwrap()
+    }
+
+    pub async fn get_match_room_by_id(&self, room: RoomId) -> Option<MatchInfo> {
+        let (res_tx, res_rx) = oneshot::channel();
+        self.cmd_tx.send(Command::GetMatchRoomById { room, res_tx }).unwrap();
         res_rx.await.unwrap()
     }
 

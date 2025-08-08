@@ -12,6 +12,16 @@ pub struct User {
     pub elo: i32,
 }
 
+impl User {
+    pub fn into_user_get(self) -> UserGet {
+        UserGet {
+            id: self.id.unwrap(),
+            username: self.username,
+            elo: self.elo,
+        }
+    }
+}
+
 #[derive(Queryable, Selectable, Identifiable, Serialize, Deserialize)]
 #[diesel(table_name = crate::data::schema::users)]
 pub struct UserGet {

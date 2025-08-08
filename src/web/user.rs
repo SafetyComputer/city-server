@@ -134,3 +134,14 @@ pub async fn post_user(db: web::Data<Dbpool>, user_info: web::Json<UserPost>) ->
         HttpResponse::Forbidden().json("user already exist")
     }
 }
+
+#[get("user/self")]
+pub async fn get_user_self(identity: Identity, db: web::Data<Dbpool>) -> impl Responder {
+    let user = identity_to_user(identity, db).await;
+    match user {
+        Ok(user) => {
+            HttpResponse::Ok().json(user.into_user_get())
+        }
+        Err(e) => e
+    }
+}

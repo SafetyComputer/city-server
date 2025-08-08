@@ -26,8 +26,6 @@ struct UserMessage {
 #[derive(Deserialize)]
 enum Command {
     SendMessage,
-    StartMatching,
-    StopMatching,
     Move,
 }
 
@@ -211,20 +209,6 @@ async fn process_text_msg(
                     .await;
                 let msg =
                     ServerMessage::success_message("successfully sent message", msg.command_id);
-                let _ = session.text(msg.to_string()).await;
-            }
-
-            Command::StartMatching => {
-                match_server.start_matching(uuid).await;
-                let msg =
-                    ServerMessage::success_message("successfully started matching", msg.command_id);
-                let _ = session.text(msg.to_string()).await;
-            }
-
-            Command::StopMatching => {
-                match_server.stop_matching(uuid).await;
-                let msg =
-                    ServerMessage::success_message("successfully stopped matching", msg.command_id);
                 let _ = session.text(msg.to_string()).await;
             }
 

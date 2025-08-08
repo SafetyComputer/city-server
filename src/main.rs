@@ -87,7 +87,7 @@ async fn main() -> std::io::Result<()> {
             if let Err(_) = result {
                 break;
             }
-        };
+        }
         return io::Result::<()>::Err(io::Error::new(
             io::ErrorKind::AddrNotAvailable,
             "closed connection",
@@ -118,10 +118,12 @@ async fn main() -> std::io::Result<()> {
             .service(web::logout)
             .service(web::post_user)
             .service(web::get_user)
+            .service(web::get_user_self)
             .service(web::get_match_ws)
             .service(web::get_room)
             .service(web::post_room)
             .service(web::patch_room)
+            .service(web::reconnect)
             .service(web::post_matching)
             .service(web::delete_matching)
     })
