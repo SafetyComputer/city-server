@@ -272,16 +272,14 @@ enum Command {
 
     PlayerJoin {
         room: RoomId,
-        conn: ConnId,
         uuid: Uuid,
-        res_tx: oneshot::Sender<Option<ServerMessage>>,
+        res_tx: oneshot::Sender<Option<MatchInfo>>,
     },
 
     ViewerJoin {
         room: RoomId,
-        conn: ConnId,
         uuid: Uuid,
-        res_tx: oneshot::Sender<Option<ServerMessage>>,
+        res_tx: oneshot::Sender<Option<MatchInfo>>,
     },
 
     CreateMatchRoom {
@@ -299,9 +297,8 @@ enum Command {
     },
 
     Reconnect {
-        conn: ConnId,
         uuid: Uuid,
-        res_tx: oneshot::Sender<Vec<ServerMessage>>,
+        res_tx: oneshot::Sender<Vec<MatchInfo>>,
     },
 }
 
@@ -448,12 +445,7 @@ impl MatchServer {
         result
     }
 
-    async fn join_players_match_room(
-        &mut self,
-        room_id: RoomId,
-        conn: ConnId,
-        uuid: Uuid,
-    ) -> Option<ServerMessage> {
+    async fn join_players_match_room(&mut self, room_id: RoomId, uuid: Uuid) -> Option<MatchInfo> {
         let room = self.matches.get_mut(&room_id);
         match room {
             Some(room) => {
@@ -462,30 +454,26 @@ impl MatchServer {
                     return None;
                 }
                 let msg = ServerMessage::join_message(uuid, room_id);
-                self.send_message_in_room(room_id, conn, uuid, &msg).await;
-                let msg =
-                    ServerMessage::match_message(&self.get_match_info(room_id).unwrap(), room_id);
-                self.send_message_in_room(room_id, conn, uuid, &msg).await;
-                Some(msg)
+                self.broadcast_message(room_id, &msg).await;
+                let info = self.get_match_info(room_id).unwrap();
+                let msg = ServerMessage::match_message(&info, room_id);
+                self.broadcast_message(room_id, &msg).await;
+
+                Some(info)
             }
             None => None,
         }
     }
 
-    async fn join_viewers_match_room(
-        &mut self,
-        room_id: RoomId,
-        conn: ConnId,
-        uuid: Uuid,
-    ) -> Option<ServerMessage> {
+    async fn join_viewers_match_room(&mut self, room_id: RoomId, uuid: Uuid) -> Option<MatchInfo> {
         let room = self.matches.get_mut(&room_id);
         match room {
             Some(room) => {
                 if room.join_viewers(uuid) {
                     let info = self.get_match_info(room_id).unwrap();
                     let msg = ServerMessage::join_message(uuid, room_id);
-                    self.send_message_in_room(room_id, conn, uuid, &msg).await;
-                    Some(ServerMessage::match_message(&info, room_id))
+                    self.broadcast_message(room_id, &msg).await;
+                    Some(info)
                 } else {
                     None
                 }
@@ -595,7 +583,7 @@ impl MatchServer {
         }
     }
 
-    async fn reconnect(&mut self, conn: ConnId, uuid: Uuid) -> Vec<ServerMessage> {
+    async fn reconnect(&mut self, uuid: Uuid) -> Vec<MatchInfo> {
         let mut result = Vec::new();
         let rooms: Vec<RoomId> = self
             .matches
@@ -609,7 +597,7 @@ impl MatchServer {
             })
             .collect();
         for room_id in rooms {
-            if let Some(msg) = self.join_viewers_match_room(room_id, conn, uuid).await {
+            if let Some(msg) = self.join_viewers_match_room(room_id, uuid).await {
                 result.push(msg);
             }
         }
@@ -651,13 +639,13 @@ impl MatchServer {
                             let _ = res_tx.send(());
                         }
 
-                        Command::PlayerJoin { room, conn, uuid, res_tx } => {
-                            let result = self.join_players_match_room(room, conn, uuid).await;
+                        Command::PlayerJoin { room, uuid, res_tx } => {
+                            let result = self.join_players_match_room(room, uuid).await;
                             let _ = res_tx.send(result);
                         }
 
-                        Command::ViewerJoin { room, conn, uuid, res_tx } => {
-                            let result = self.join_viewers_match_room(room, conn, uuid).await;
+                        Command::ViewerJoin { room, uuid, res_tx } => {
+                            let result = self.join_viewers_match_room(room, uuid).await;
                             let _ = res_tx.send(result);
                         }
 
@@ -678,8 +666,8 @@ impl MatchServer {
 
                         Command::GetMatchRoom{ room, res_tx } => {},
 
-                        Command::Reconnect{ conn, uuid, res_tx } => {
-                            let result = self.reconnect(conn, uuid).await;
+                        Command::Reconnect{ uuid, res_tx } => {
+                            let result = self.reconnect(uuid).await;
                             let _ = res_tx.send(result);
                         }
                     }
@@ -815,38 +803,18 @@ impl MatchServerHandle {
         res_rx.await.unwrap();
     }
 
-    pub async fn join_viewers(
-        &self,
-        room: RoomId,
-        conn: ConnId,
-        uuid: Uuid,
-    ) -> Option<ServerMessage> {
+    pub async fn join_viewers(&self, room: RoomId, uuid: Uuid) -> Option<MatchInfo> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
-            .send(Command::ViewerJoin {
-                room,
-                conn,
-                uuid,
-                res_tx,
-            })
+            .send(Command::ViewerJoin { room, uuid, res_tx })
             .unwrap();
         res_rx.await.unwrap()
     }
 
-    pub async fn join_players(
-        &self,
-        room: RoomId,
-        conn: ConnId,
-        uuid: Uuid,
-    ) -> Option<ServerMessage> {
+    pub async fn join_players(&self, room: RoomId, uuid: Uuid) -> Option<MatchInfo> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
-            .send(Command::PlayerJoin {
-                room,
-                conn,
-                uuid,
-                res_tx,
-            })
+            .send(Command::PlayerJoin { room, uuid, res_tx })
             .unwrap();
         res_rx.await.unwrap()
     }
@@ -875,16 +843,14 @@ impl MatchServerHandle {
 
     pub async fn list_match_room(&self) -> Vec<MatchInfo> {
         let (res_tx, res_rx) = oneshot::channel();
-        self.cmd_tx
-            .send(Command::ListMatchRoom { res_tx })
-            .unwrap();
+        self.cmd_tx.send(Command::ListMatchRoom { res_tx }).unwrap();
         res_rx.await.unwrap()
     }
 
-    pub async fn reconnect(&self, conn: ConnId, uuid: Uuid) -> Vec<ServerMessage> {
+    pub async fn reconnect(&self, uuid: Uuid) -> Vec<MatchInfo> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
-            .send(Command::Reconnect { conn, uuid, res_tx })
+            .send(Command::Reconnect { uuid, res_tx })
             .unwrap();
         res_rx.await.unwrap()
     }

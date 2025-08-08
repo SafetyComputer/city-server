@@ -29,10 +29,6 @@ enum Command {
     StartMatching,
     StopMatching,
     Move,
-    CreateMatchRoom,
-    JoinPlayers,
-    JoinViewers,
-    Reconnect,
 }
 
 #[derive(Serialize)]
@@ -260,70 +256,6 @@ async fn process_text_msg(
                             )
                             .await;
                     }
-                }
-            }
-
-            Command::CreateMatchRoom => {
-                let room_id = match_server.create_match_room(uuid).await;
-                let msg = ServerMessage::success_message(format!("{room_id}"), msg.command_id);
-                let _ = session.text(msg.to_string()).await;
-            }
-
-            Command::JoinPlayers => {
-                let room_id = msg.room.unwrap();
-                let result = match_server.join_players(room_id, conn, uuid).await;
-                match result {
-                    Some(match_message) => {
-                        let msg = ServerMessage::success_message(
-                            format!("successfully joined room {} as player", room_id),
-                            msg.command_id,
-                        );
-                        let _ = session.text(msg.to_string()).await;
-                        let _ = session.text(match_message.to_string()).await;
-                    }
-
-                    None => {
-                        let msg = ServerMessage::error_message(
-                            format!("failed to join room {} as player", room_id),
-                            msg.command_id,
-                        );
-                        let _ = session.text(msg.to_string()).await;
-                    }
-                }
-            }
-
-            Command::JoinViewers => {
-                let room_id = msg.room.unwrap();
-                let result = match_server.join_viewers(room_id, conn, uuid).await;
-                match result {
-                    Some(match_message) => {
-                        let msg = ServerMessage::success_message(
-                            format!("successfully joined room {} as viewer", room_id),
-                            msg.command_id,
-                        );
-                        let _ = session.text(msg.to_string()).await;
-                        let _ = session.text(match_message.to_string()).await;
-                    }
-
-                    None => {
-                        let msg = ServerMessage::error_message(
-                            format!("failed to join room {} as viewer", room_id),
-                            msg.command_id,
-                        );
-                        let _ = session.text(msg.to_string()).await;
-                    }
-                }
-            }
-
-            Command::Reconnect => {
-                let result = match_server.reconnect(conn, uuid).await;
-                let msg = ServerMessage::success_message(
-                    format!("successfully reconnected to {} rooms", result.len()),
-                    msg.command_id,
-                );
-                let _ = session.text(msg.to_string()).await;
-                for msg in result {
-                    let _ = session.text(msg.to_string()).await;
                 }
             }
         }

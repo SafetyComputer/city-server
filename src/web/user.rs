@@ -36,12 +36,17 @@ impl UserPost {
 pub async fn identity_to_user(
     identity: Identity,
     db: web::Data<Dbpool>,
-) -> Result<User, diesel::result::Error> {
+) -> Result<User, HttpResponse> {
     use crate::data::schema::users::dsl::*;
     let conn = &mut db.get_connection();
-    users
+    let user = users
         .filter(username.eq(&identity.id().unwrap()))
-        .first(conn)
+        .first(conn);
+    if let Ok(user) = user {
+        Ok(user)
+    } else {
+        Err(HttpResponse::Unauthorized().json("login info error"))
+    }
 }
 
 // 登录处理

@@ -4,13 +4,13 @@ use actix_cors::Cors;
 use actix_identity::IdentityMiddleware;
 use actix_rt;
 use actix_session::{SessionMiddleware, config::PersistentSession, storage::CookieSessionStore};
-use actix_web::{App, HttpServer, cookie::Key, web};
+use actix_web::{App, HttpServer, cookie::Key};
 use city_server::matchmaking::service::BackgroundTask;
 use dotenvy::dotenv;
 use futures_util::try_join;
 
 use city_server::matchmaking::MatchServer;
-use city_server::network;
+use city_server::web;
 use rustls::ServerConfig;
 
 fn get_secret_key(key_raw: &String) -> Key {
@@ -99,8 +99,8 @@ async fn main() -> std::io::Result<()> {
 
     let http_server = HttpServer::new(move || {
         App::new()
-            .app_data(web::Data::new(pool.clone()))
-            .app_data(web::Data::new(server_tx.clone()))
+            .app_data(actix_web::web::Data::new(pool.clone()))
+            .app_data(actix_web::web::Data::new(server_tx.clone()))
             .wrap(IdentityMiddleware::default())
             .wrap(
                 SessionMiddleware::builder(CookieSessionStore::default(), key.clone())
@@ -114,11 +114,16 @@ async fn main() -> std::io::Result<()> {
                     .build(),
             )
             .wrap(Cors::permissive())
-            .service(network::login)
-            .service(network::logout)
-            .service(network::post_user)
-            .service(network::get_user)
-            .service(network::get_match_ws)
+            .service(web::login)
+            .service(web::logout)
+            .service(web::post_user)
+            .service(web::get_user)
+            .service(web::get_match_ws)
+            .service(web::get_room)
+            .service(web::post_room)
+            .service(web::patch_room)
+            .service(web::post_matching)
+            .service(web::delete_matching)
     })
     .bind_rustls_0_23("0.0.0.0:8088", tls_config)?
     // .bind("0.0.0.0:8088")?
