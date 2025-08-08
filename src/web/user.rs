@@ -2,7 +2,6 @@ use actix_identity::Identity;
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, Responder, get, post, web};
 use diesel::{ExpressionMethods, QueryDsl, RunQueryDsl, insert_into};
 use serde::Deserialize;
-use serde_json::json;
 
 use crate::data::{
     Dbpool,
@@ -59,10 +58,7 @@ pub async fn login(
     user_info: web::Json<UserPost>,
 ) -> impl Responder {
     if identity.is_some() {
-        return HttpResponse::Unauthorized().json(json!({
-            "success": false,
-            "message": "already logged in"
-        }));
+        return HttpResponse::Unauthorized().json("already logged in");
     }
 
     use crate::data::schema::users::dsl::*;
@@ -72,18 +68,11 @@ pub async fn login(
         .filter(password.eq(&user_info.password))
         .first::<User>(conn)
     {
-        Ok(user) => {
+        Ok(_) => {
             Identity::login(&request.extensions(), user_info.username.clone()).unwrap();
-            HttpResponse::Ok().json(json!({
-                "success": true,
-                "message": "login successful",
-                "data": user.into_user_get()
-            }))
+            HttpResponse::Ok().json("success")
         }
-        Err(_) => HttpResponse::Unauthorized().json(json!({
-            "success": false,
-            "message": "login info error"
-        })),
+        Err(_) => HttpResponse::Unauthorized().json("login info error"),
     }
 }
 
@@ -93,15 +82,9 @@ pub async fn logout(identity: Option<Identity>) -> impl Responder {
     match identity {
         Some(identity) => {
             identity.logout();
-            HttpResponse::Ok().json(json!({
-                "success": true,
-                "message": "logout successful"
-            }))
+            HttpResponse::Ok().json("success")
         }
-        None => HttpResponse::Unauthorized().json(json!({
-            "success": false,
-            "message": "not logged in"
-        })),
+        None => HttpResponse::Unauthorized().json("haven't logged in"),
     }
 }
 
@@ -122,21 +105,11 @@ pub async fn get_user(db: web::Data<Dbpool>, user_info: web::Query<UserQuery>) -
     }
 
     match query.load::<UserGet>(conn) {
-        Ok(users) if !users.is_empty() => HttpResponse::Ok().json(json!({
-            "success": true,
-            "message": "user found",
-            "data": users
-        })),
-        Ok(_) => HttpResponse::NotFound().json(json!({
-            "success": false,
-            "message": "user not found"
-        })),
+        Ok(users) if !users.is_empty() => HttpResponse::Ok().json(users),
+        Ok(_) => HttpResponse::NotFound().json("no such user"),
         Err(e) => {
             eprintln!("Database error: {e:?}");
-            HttpResponse::InternalServerError().json(json!({
-                "success": false,
-                "message": "server database error"
-            }))
+            HttpResponse::InternalServerError().json("server database error")
         }
     }
 }
@@ -154,15 +127,8 @@ pub async fn post_user(db: web::Data<Dbpool>, user_info: web::Json<UserPost>) ->
     if existing_users.is_empty() {
         let new_user = user_info.into_inner().into_user();
         match insert_into(users).values(&new_user).execute(conn) {
-            Ok(_) => HttpResponse::Ok().json(json!({
-                "success": true,
-                "message": "user created successfully",
-                "data": new_user.into_user_get()
-            })),
-            Err(_) => HttpResponse::InternalServerError().json(json!({
-                "success": false,
-                "message": "server database error"
-            })),
+            Ok(_) => HttpResponse::Ok().json("success"),
+            Err(_) => HttpResponse::InternalServerError().json("server database error"),
         }
     } else {
         HttpResponse::Forbidden().json("user already exist")
@@ -173,13 +139,7 @@ pub async fn post_user(db: web::Data<Dbpool>, user_info: web::Json<UserPost>) ->
 pub async fn get_user_self(identity: Identity, db: web::Data<Dbpool>) -> impl Responder {
     let user = identity_to_user(identity, db).await;
     match user {
-        Ok(user) => HttpResponse::Ok().json(json!({
-            "success": true,
-            "message": "user found",
-            "data": user.into_user_get()
-        })),
-        Err(e) => HttpResponse::Unauthorized().json(json!({
-            "success": false,
-            "message": "not logged in or login expired",
-        })),
+        Ok(user) => HttpResponse::Ok().json(user.into_user_get()),
+        Err(e) => e,
+    }
 }
