@@ -14,10 +14,7 @@ pub enum Cell {
 
 impl Cell {
     pub fn is_empty(&self) -> bool {
-        match self {
-            Cell::Empty => true,
-            _ => false,
-        }
+        matches!(self, Cell::Empty)
     }
 }
 

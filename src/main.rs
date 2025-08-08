@@ -2,7 +2,6 @@ use std::{env, io};
 
 use actix_cors::Cors;
 use actix_identity::IdentityMiddleware;
-use actix_rt;
 use actix_session::{SessionMiddleware, config::PersistentSession, storage::CookieSessionStore};
 use actix_web::{App, HttpServer, cookie::Key};
 use city_server::matchmaking::service::BackgroundTask;
@@ -45,12 +44,12 @@ fn get_tls_config(tls_path: String) -> ServerConfig {
         .unwrap();
 
     // set up TLS config options
-    let tls_config = rustls::ServerConfig::builder()
+    
+
+    rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(tls_certs, rustls::pki_types::PrivateKeyDer::Pkcs8(tls_key))
-        .unwrap();
-
-    tls_config
+        .unwrap()
 }
 
 #[actix_rt::main]
@@ -84,14 +83,14 @@ async fn main() -> std::io::Result<()> {
                     background_tx.schedule_background_task(BackgroundTask::CheckMatches)
                 }
             };
-            if let Err(_) = result {
+            if result.is_err() {
                 break;
             }
         }
-        return io::Result::<()>::Err(io::Error::new(
+        io::Result::<()>::Err(io::Error::new(
             io::ErrorKind::AddrNotAvailable,
             "closed connection",
-        ));
+        ))
     });
 
     let tls_path = env::var("TLS_PATH").unwrap();

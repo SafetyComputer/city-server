@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::{fmt::Display, time::{Duration, Instant}};
 
 use actix_ws::AggregatedMessage;
 use futures_util::StreamExt as _;
@@ -99,7 +99,7 @@ impl ServerMessage {
         Self {
             message_type: MessageType::Join,
             room: Some(room),
-            data: format!("{}", uuid),
+            data: format!("{uuid}"),
         }
     }
 
@@ -107,7 +107,7 @@ impl ServerMessage {
         Self {
             message_type: MessageType::Leave,
             room: Some(room),
-            data: format!("{}", uuid),
+            data: format!("{uuid}"),
         }
     }
 
@@ -126,9 +126,11 @@ impl ServerMessage {
             data: serde_json::to_string(mv).unwrap(),
         }
     }
+}
 
-    pub fn to_string(&self) -> String {
-        serde_json::to_string(self).unwrap()
+impl Display for ServerMessage{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", serde_json::to_string(self).unwrap())
     }
 }
 
@@ -224,11 +226,11 @@ async fn process_text_msg(
                         } else {
                             ServerMessage::error_message("illegal move", msg.command_id)
                         };
-                        let _ = session.text(msg.to_string());
+                        let _ = session.text(msg.to_string()).await;
                         if let Some(winner) = result.winner {
                             let _ = session.text(
                                 ServerMessage::end_message(msg.room.unwrap(), winner).to_string(),
-                            );
+                            ).await;
                         }
                     }
 

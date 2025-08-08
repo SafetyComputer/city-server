@@ -22,7 +22,7 @@ pub struct UserQuery {
 }
 
 impl UserPost {
-    pub fn to_user(self) -> User {
+    pub fn into_user(self) -> User {
         User {
             id: None,
             username: self.username,
@@ -69,7 +69,7 @@ pub async fn login(
         .first::<User>(conn)
     {
         Ok(_) => {
-            Identity::login(&request.extensions(), user_info.username.clone().into()).unwrap();
+            Identity::login(&request.extensions(), user_info.username.clone()).unwrap();
             HttpResponse::Ok().json("success")
         }
         Err(_) => HttpResponse::Unauthorized().json("login info error"),
@@ -108,7 +108,7 @@ pub async fn get_user(db: web::Data<Dbpool>, user_info: web::Query<UserQuery>) -
         Ok(users) if !users.is_empty() => HttpResponse::Ok().json(users),
         Ok(_) => HttpResponse::NotFound().json("no such user"),
         Err(e) => {
-            eprintln!("Database error: {:?}", e);
+            eprintln!("Database error: {e:?}");
             HttpResponse::InternalServerError().json("server database error")
         }
     }
@@ -125,7 +125,7 @@ pub async fn post_user(db: web::Data<Dbpool>, user_info: web::Json<UserPost>) ->
         .expect("db error");
 
     if existing_users.is_empty() {
-        let new_user = user_info.into_inner().to_user();
+        let new_user = user_info.into_inner().into_user();
         match insert_into(users).values(&new_user).execute(conn) {
             Ok(_) => HttpResponse::Ok().json("success"),
             Err(_) => HttpResponse::InternalServerError().json("server database error"),

@@ -53,7 +53,7 @@ impl Players {
                 }
             }
         }
-        return None;
+        None
     }
 
     fn contains(&self, id: Uuid) -> bool {
@@ -73,7 +73,7 @@ impl Players {
                 }
             }
         }
-        return false;
+        false
     }
 }
 
@@ -88,7 +88,7 @@ struct Sessions {
 
 impl Sessions {
     fn send(&self, message: String) {
-        for (_, tx) in &self.inner {
+        for tx in self.inner.values() {
             let _ = tx.send(message.clone());
         }
     }
@@ -182,35 +182,35 @@ impl MatchRoom {
         }
         match color {
             Some(Color::Blue) => {
-                if let None = self.players.blue {
+                if self.players.blue.is_none() {
                     self.players.blue = Some(id);
                     self.viewers.insert(id);
-                    return true;
+                    true
                 } else {
-                    return false;
+                    false
                 }
             }
             Some(Color::Green) => {
-                if let None = self.players.green {
+                if self.players.green.is_none() {
                     self.players.green = Some(id);
                     self.viewers.insert(id);
-                    return true;
+                    true
                 } else {
-                    return false;
+                    false
                 }
             }
             None => {
-                if let None = self.players.blue {
+                if self.players.blue.is_none() {
                     self.players.blue = Some(id);
                     self.viewers.insert(id);
                     return true;
                 }
-                if let None = self.players.green {
+                if self.players.green.is_none() {
                     self.players.green = Some(id);
                     self.viewers.insert(id);
                     return true;
                 }
-                return false;
+                false
             }
         }
     }
@@ -338,7 +338,7 @@ impl MatchServer {
                 game_history,
                 player_blue: room.players.blue,
                 player_green: room.players.green,
-                viewers: room.viewers.iter().map(|id| *id).collect(),
+                viewers: room.viewers.iter().copied().collect(),
             };
             Some(info)
         } else {
@@ -509,8 +509,8 @@ impl MatchServer {
 
                     Some(Color::Blue) => {
                         if room.game.blue_turn {
-                            let result = room.game.make_move(mv, true);
-                            result
+                            
+                            room.game.make_move(mv, true)
                         } else {
                             false
                         }
@@ -518,8 +518,8 @@ impl MatchServer {
 
                     Some(Color::Green) => {
                         if !room.game.blue_turn {
-                            let result = room.game.make_move(mv, true);
-                            result
+                            
+                            room.game.make_move(mv, true)
                         } else {
                             false
                         }
