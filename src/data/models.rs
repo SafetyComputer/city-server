@@ -40,5 +40,5 @@ pub struct Match {
     pub player_blue: i32,
     pub player_green: i32,
     pub winner: String,
-    pub history: String
+    pub history: String,
 }

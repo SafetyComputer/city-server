@@ -1,4 +1,7 @@
-use std::{fmt::Display, time::{Duration, Instant}};
+use std::{
+    fmt::Display,
+    time::{Duration, Instant},
+};
 
 use actix_ws::AggregatedMessage;
 use futures_util::StreamExt as _;
@@ -128,7 +131,7 @@ impl ServerMessage {
     }
 }
 
-impl Display for ServerMessage{
+impl Display for ServerMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", serde_json::to_string(self).unwrap())
     }
@@ -228,9 +231,12 @@ async fn process_text_msg(
                         };
                         let _ = session.text(msg.to_string()).await;
                         if let Some(winner) = result.winner {
-                            let _ = session.text(
-                                ServerMessage::end_message(msg.room.unwrap(), Some(winner)).to_string(),
-                            ).await;
+                            let _ = session
+                                .text(
+                                    ServerMessage::end_message(msg.room.unwrap(), Some(winner))
+                                        .to_string(),
+                                )
+                                .await;
                         }
                     }
 

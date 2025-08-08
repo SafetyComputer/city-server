@@ -16,18 +16,6 @@ struct RoomQuery {
     room_id: Option<RoomId>,
 }
 
-#[derive(Deserialize)]
-enum Command {
-    JoinPlayer,
-    JoinViewer,
-}
-
-#[derive(Deserialize)]
-struct RoomCommand {
-    room_id: RoomId,
-    command: Command,
-}
-
 #[get("/room")]
 async fn get_room(
     _: Identity,
@@ -62,27 +50,30 @@ async fn post_room(
     }
 }
 
-#[patch("/room")]
-async fn patch_room(
+#[patch("/room/join/{join_as}")]
+async fn patch_room_join(
     identity: Identity,
     db: web::Data<Dbpool>,
     handle: web::Data<MatchServerHandle>,
-    room_command: Json<RoomCommand>,
+    room_info: Json<RoomQuery>,
+    path: web::Path<String>,
 ) -> impl Responder {
     let user = identity_to_user(identity, db).await;
+    let join_as = path.into_inner();
     match user {
         Ok(user) => {
-            let info = match room_command.command {
-                Command::JoinPlayer => {
+            let info = match join_as.as_str() {
+                "player" => {
                     handle
-                        .join_players(room_command.room_id, user.id.unwrap())
+                        .join_players(room_info.room_id.unwrap(), user.id.unwrap())
                         .await
                 }
-                Command::JoinViewer => {
+                "viewer" => {
                     handle
-                        .join_viewers(room_command.room_id, user.id.unwrap())
+                        .join_players(room_info.room_id.unwrap(), user.id.unwrap())
                         .await
                 }
+                _ => None,
             };
 
             if let Some(info) = info {
@@ -90,6 +81,25 @@ async fn patch_room(
             } else {
                 HttpResponse::BadRequest().json("failed to join room")
             }
+        }
+        Err(e) => e,
+    }
+}
+
+#[patch("/room/leave")]
+async fn patch_room_leave(
+    identity: Identity,
+    db: web::Data<Dbpool>,
+    handle: web::Data<MatchServerHandle>,
+    room_info: Json<RoomQuery>,
+) -> impl Responder {
+    let user = identity_to_user(identity, db).await;
+    match user {
+        Ok(user) => {
+            handle
+                .leave_match_room(room_info.room_id.unwrap(), user.id.unwrap())
+                .await;
+            HttpResponse::Ok().json("success")
         }
         Err(e) => e,
     }

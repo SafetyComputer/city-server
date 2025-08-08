@@ -31,7 +31,7 @@ pub type Uuid = i32;
 
 fn elo_update(winner_elo: i32, loser_elo: i32) -> (i32, i32) {
     let expected_winner =
-        1_f32 / (1_f32 + 10_f32.powf((loser_elo as f32 - winner_elo as f32) / 400 as f32));
+        1_f32 / (1_f32 + 10_f32.powf((loser_elo as f32 - winner_elo as f32) / 400_f32));
     let expected_loser = 1_f32 - expected_winner;
 
     (
@@ -195,14 +195,6 @@ impl MatchRoom {
         self.players.contains(id)
     }
 
-    // fn is_audience(&self, id: ConnId) -> bool {
-    //     self.viewers.contains(&id) && !self.is_player(id)
-    // }
-
-    // fn has_both_player(&self) -> bool {
-    //     self.players.blue.is_some() && self.players.green.is_some()
-    // }
-
     fn join_players(&mut self, id: Uuid, color: Option<Color>) -> bool {
         if self.is_player(id) {
             return false;
@@ -255,7 +247,17 @@ impl MatchRoom {
     }
 
     fn is_empty(&self) -> bool {
-        self.players.blue.is_none() && self.players.green.is_none()
+        if let Some(blue) = self.players.blue
+            && self.contains(blue)
+        {
+            return false;
+        }
+        if let Some(green) = self.players.green
+            && self.contains(green)
+        {
+            return false;
+        }
+        true
     }
 
     fn save(self, db: web::Data<Dbpool>) -> Result<(), diesel::result::Error> {
@@ -329,7 +331,8 @@ impl MatchRoom {
         };
 
         let game_over = self.game.game_over();
-        let result = if game_over {
+
+        if game_over {
             self.ended = true;
             let (winner, _) = self.game.game_result();
             self.winner = Some(winner);
@@ -342,9 +345,7 @@ impl MatchRoom {
                 success,
                 winner: None,
             }
-        };
-
-        result
+        }
     }
 }
 
@@ -405,6 +406,12 @@ enum Command {
 
     ListMatchRoom {
         res_tx: oneshot::Sender<Vec<MatchInfo>>,
+    },
+
+    LeaveMatchRoom {
+        room: RoomId,
+        uuid: Uuid,
+        res_tx: oneshot::Sender<()>,
     },
 
     GetMatchRoomById {
@@ -563,6 +570,14 @@ impl MatchServer {
         result
     }
 
+    async fn leave_match_room(&mut self, room_id: RoomId, uuid: Uuid) {
+        if let Some(room) = self.matches.get_mut(&room_id) {
+            room.remove(uuid);
+            let msg = ServerMessage::leave_message(uuid, room_id);
+            self.broadcast_message(room_id, &msg).await;
+        }
+    }
+
     async fn join_players_match_room(&mut self, room_id: RoomId, uuid: Uuid) -> Option<MatchInfo> {
         let room = self.matches.get_mut(&room_id);
         match room {
@@ -674,8 +689,8 @@ impl MatchServer {
             })
             .collect();
         for room_id in rooms {
-            if let Some(msg) = self.join_viewers_match_room(room_id, uuid).await {
-                result.push(msg);
+            if let Some(info) = self.join_viewers_match_room(room_id, uuid).await {
+                result.push(info);
             }
         }
         result
@@ -739,6 +754,11 @@ impl MatchServer {
                         Command::ListMatchRoom{ res_tx } => {
                             let result = self.list_match_room().await;
                             let _ = res_tx.send(result);
+                        },
+
+                        Command::LeaveMatchRoom{ room, uuid, res_tx } => {
+                            self.leave_match_room(room, uuid).await;
+                            let _ = res_tx.send(());
                         },
 
                         Command::GetMatchRoomById{ room, res_tx } => {
@@ -937,6 +957,14 @@ impl MatchServerHandle {
     pub async fn list_match_room(&self) -> Vec<MatchInfo> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx.send(Command::ListMatchRoom { res_tx }).unwrap();
+        res_rx.await.unwrap()
+    }
+
+    pub async fn leave_match_room(&self, room: RoomId, uuid: Uuid) {
+        let (res_tx, res_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::LeaveMatchRoom { room, uuid, res_tx })
+            .unwrap();
         res_rx.await.unwrap()
     }
 

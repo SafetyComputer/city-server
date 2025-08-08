@@ -139,9 +139,7 @@ pub async fn post_user(db: web::Data<Dbpool>, user_info: web::Json<UserPost>) ->
 pub async fn get_user_self(identity: Identity, db: web::Data<Dbpool>) -> impl Responder {
     let user = identity_to_user(identity, db).await;
     match user {
-        Ok(user) => {
-            HttpResponse::Ok().json(user.into_user_get())
-        }
-        Err(e) => e
+        Ok(user) => HttpResponse::Ok().json(user.into_user_get()),
+        Err(e) => e,
     }
 }
