@@ -158,11 +158,11 @@ impl Sessions {
 
 #[derive(Serialize)]
 pub struct MatchInfo {
-    room: RoomId,
-    game_history: Vec<Move>,
-    player_blue: Option<Uuid>,
-    player_green: Option<Uuid>,
-    viewers: Vec<Uuid>,
+    pub room: RoomId,
+    pub game_history: Vec<Move>,
+    pub player_blue: Option<Uuid>,
+    pub player_green: Option<Uuid>,
+    pub viewers: Vec<Uuid>,
 }
 
 struct MatchRoom {
