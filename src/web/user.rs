@@ -68,9 +68,9 @@ pub async fn login(
         .filter(password.eq(&user_info.password))
         .first::<User>(conn)
     {
-        Ok(_) => {
+        Ok(user) => {
             Identity::login(&request.extensions(), user_info.username.clone()).unwrap();
-            HttpResponse::Ok().json("success")
+            HttpResponse::Ok().json(user.into_user_get())
         }
         Err(_) => HttpResponse::Unauthorized().json("login info error"),
     }
