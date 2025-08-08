@@ -1,6 +1,7 @@
 use std::error::Error;
 
 use city_server::data::models::{Match, User};
+use city_server::game::Winner;
 use diesel::PgConnection;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
@@ -75,7 +76,7 @@ impl TestDatabase {
             id: None,
             player_blue: player1,
             player_green: player2,
-            winner: "none".to_string(),
+            winner: Winner::Blue,
             history: "[]".to_string(),
         };
 

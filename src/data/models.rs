@@ -1,6 +1,8 @@
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::game::Winner;
+
 #[derive(Queryable, Selectable, Identifiable, Insertable, Serialize, Deserialize)]
 #[diesel(table_name = crate::data::schema::users)]
 #[diesel(check_for_backend(diesel::pg::Pg))]
@@ -39,6 +41,6 @@ pub struct Match {
     pub id: Option<i32>,
     pub player_blue: i32,
     pub player_green: i32,
-    pub winner: String,
+    pub winner: Winner,
     pub history: String,
 }

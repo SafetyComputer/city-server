@@ -4,6 +4,7 @@ use std::fmt;
 use std::ops::Add;
 
 use serde::{Deserialize, Serialize};
+use diesel_derive_enum;
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
 pub enum Cell {
@@ -226,11 +227,22 @@ pub struct Score {
     green: i32,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone, Copy, diesel_derive_enum::DbEnum)]
+#[ExistingTypePath = "crate::data::schema::sql_types::Winner"]
 pub enum Winner {
     Blue,
     Green,
     Draw,
+}
+
+impl fmt::Display for Winner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Winner::Blue => write!(f, "Blue"),
+            Winner::Green => write!(f, "Green"),
+            Winner::Draw => write!(f, "Draw"),
+        }
+    }
 }
 
 #[derive(Clone)]

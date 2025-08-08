@@ -267,7 +267,7 @@ impl MatchRoom {
             id: None,
             player_blue: blue_id,
             player_green: green_id,
-            winner: serde_json::to_string(&self.winner).unwrap(),
+            winner: self.winner.unwrap(),
             history: serde_json::to_string(&self.game.history).unwrap(),
         };
         conn.transaction(|conn| {
