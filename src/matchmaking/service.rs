@@ -23,7 +23,7 @@ use crate::{
 
 use super::handler::ServerMessage;
 
-pub type ConnId = u64;
+pub type ConnId = u32;
 
 pub type RoomId = u32;
 
