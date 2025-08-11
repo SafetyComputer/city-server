@@ -24,9 +24,9 @@ struct MovePost {
 }
 
 #[derive(Deserialize)]
-struct  ChatPost {
+struct ChatPost {
     room_id: RoomId,
-    message: String
+    message: String,
 }
 
 #[get("/room")]
@@ -97,7 +97,9 @@ async fn post_room_chat(
     match user {
         Ok(user) => {
             let msg = user.username.clone() + ": " + chat_info.message.clone().as_str();
-            handle.send_message(chat_info.room_id, user.id.unwrap(), msg).await;
+            handle
+                .send_message(chat_info.room_id, user.id.unwrap(), msg)
+                .await;
             HttpResponse::Ok().json("success")
         }
         Err(e) => e,
