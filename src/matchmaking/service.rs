@@ -25,7 +25,7 @@ use super::handler::ServerMessage;
 
 pub type ConnId = u64;
 
-pub type RoomId = u64;
+pub type RoomId = u32;
 
 pub type Uuid = i32;
 
