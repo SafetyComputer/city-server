@@ -24,9 +24,9 @@ struct MovePost {
 }
 
 #[derive(Deserialize)]
-struct  ChatPost {
+struct ChatPost {
     room_id: RoomId,
-    message: String
+    message: String,
 }
 
 #[get("/room")]
@@ -38,13 +38,13 @@ async fn get_room(
     if let Some(room_id) = room_info.room_id {
         let info = handle.get_match_room_by_id(room_id).await;
         if let Some(info) = info {
-            return HttpResponse::Found().json(vec![info]);
+            return HttpResponse::Ok().json(vec![info]);
         } else {
             return HttpResponse::NotFound().json("no such room");
         }
     }
     let matches = handle.list_match_room().await;
-    HttpResponse::Found().json(matches)
+    HttpResponse::Ok().json(matches)
 }
 
 #[post("/room")]
@@ -97,7 +97,9 @@ async fn post_room_chat(
     match user {
         Ok(user) => {
             let msg = user.username.clone() + ": " + chat_info.message.clone().as_str();
-            handle.send_message(chat_info.room_id, user.id.unwrap(), msg).await;
+            handle
+                .send_message(chat_info.room_id, user.id.unwrap(), msg)
+                .await;
             HttpResponse::Ok().json("success")
         }
         Err(e) => e,

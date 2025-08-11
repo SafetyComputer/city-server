@@ -333,7 +333,6 @@ impl MatchRoom {
         success
     }
 }
-
 enum Command {
     Connect {
         uuid: Uuid,
@@ -571,6 +570,7 @@ impl MatchServer {
         match room {
             Some(room) => {
                 let result = room.join_players(uuid, None);
+                println!("{} joined room {}, {}", uuid, room_id, result);
                 if !result {
                     return None;
                 }
