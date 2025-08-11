@@ -124,7 +124,7 @@ async fn patch_room_join(
                 }
                 "viewer" => {
                     handle
-                        .join_players(room_info.room_id.unwrap(), user.id.unwrap())
+                        .join_viewers(room_info.room_id.unwrap(), user.id.unwrap())
                         .await
                 }
                 _ => None,

@@ -191,9 +191,6 @@ impl MatchRoom {
     }
 
     fn join_players(&mut self, id: Uuid, color: Option<Color>) -> bool {
-        if self.is_player(id) {
-            return false;
-        }
         match color {
             Some(Color::Blue) => {
                 if self.players.blue.is_none() {
@@ -201,7 +198,7 @@ impl MatchRoom {
                     self.viewers.insert(id);
                     true
                 } else {
-                    false
+                    self.players.blue.unwrap() == id
                 }
             }
             Some(Color::Green) => {
@@ -210,7 +207,7 @@ impl MatchRoom {
                     self.viewers.insert(id);
                     true
                 } else {
-                    false
+                    self.players.green.unwrap() == id
                 }
             }
             None => {
@@ -224,7 +221,7 @@ impl MatchRoom {
                     self.viewers.insert(id);
                     return true;
                 }
-                false
+                self.is_player(id)
             }
         }
     }
@@ -448,7 +445,8 @@ impl MatchServer {
 
     fn get_match_info(&self, room_id: RoomId) -> Option<MatchInfo> {
         if let Some(room) = self.matches.get(&room_id)
-            && !room.is_empty() && !room.ended
+            && !room.is_empty()
+            && !room.ended
         {
             let game_history = room.game.history.clone();
             let info = MatchInfo {
