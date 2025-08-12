@@ -128,8 +128,8 @@ async fn main() -> std::io::Result<()> {
             .service(web::post_matching)
             .service(web::delete_matching)
     })
-    .bind_rustls_0_23("0.0.0.0:8088", tls_config)?
-    // .bind("0.0.0.0:8088")?
+    //.bind_rustls_0_23("0.0.0.0:8088", tls_config)?
+    .bind("0.0.0.0:8088")?
     .run();
     try_join!(
         http_server,

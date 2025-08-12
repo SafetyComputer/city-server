@@ -207,7 +207,7 @@ impl MatchRoom {
             }
             None => {
                 // 避免重复加入
-                if let Some(_color) = self.players.get_color(id) {
+                if let Some(_) = self.players.get_color(id) {
                     return true;
                 }
 
@@ -243,19 +243,19 @@ impl MatchRoom {
         self.viewers.contains(&id)
     }
 
-    fn is_empty(&self) -> bool {
-        if let Some(blue) = self.players.blue
-            && self.contains(blue)
-        {
-            return false;
-        }
-        if let Some(green) = self.players.green
-            && self.contains(green)
-        {
-            return false;
-        }
-        true
-    }
+    // fn is_empty(&self) -> bool {
+    //     if let Some(blue) = self.players.blue
+    //         && self.contains(blue)
+    //     {
+    //         return false;
+    //     }
+    //     if let Some(green) = self.players.green
+    //         && self.contains(green)
+    //     {
+    //         return false;
+    //     }
+    //     true
+    // }
 
     fn is_full(&self) -> bool {
         let blue_online = self.players.blue.map_or(false, |id| self.contains(id));
@@ -597,6 +597,10 @@ impl MatchServer {
         let room = self.matches.get_mut(&room_id);
         match room {
             Some(room) => {
+                if room.is_player(uuid) {
+                    let info = self.get_match_info(room_id).unwrap();
+                    return Some(info)
+                };
                 let result = room.join_players(uuid, None);
                 if !result {
                     return None;
