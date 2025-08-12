@@ -3,8 +3,8 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::ops::Add;
 
-use serde::{Deserialize, Serialize};
 use diesel_derive_enum;
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Deserialize, Serialize)]
 pub enum Cell {

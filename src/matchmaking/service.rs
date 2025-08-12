@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     io,
+    time::{Duration, Instant},
 };
 
 use actix_web::web;
@@ -111,14 +112,6 @@ impl Sessions {
         }
     }
 
-    // fn send_with_skip(&self, message: String, skip: ConnId) {
-    //     for (conn_id, tx) in &self.inner {
-    //         if *conn_id != skip {
-    //             let _ = tx.send(message.clone());
-    //         }
-    //     }
-    // }
-
     fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }
@@ -166,6 +159,7 @@ struct MatchRoom {
     viewers: HashSet<Uuid>,
     ended: bool,
     winner: Option<Winner>,
+    incomplete_since: Option<Instant>,
 }
 
 impl MatchRoom {
@@ -183,6 +177,7 @@ impl MatchRoom {
             viewers,
             ended: false,
             winner: None,
+            incomplete_since: Some(Instant::now()),
         }
     }
 
@@ -191,7 +186,7 @@ impl MatchRoom {
     }
 
     fn join_players(&mut self, id: Uuid, color: Option<Color>) -> bool {
-        match color {
+        let result = match color {
             Some(Color::Blue) => {
                 if self.players.blue.is_none() {
                     self.players.blue = Some(id);
@@ -211,6 +206,11 @@ impl MatchRoom {
                 }
             }
             None => {
+                // 避免重复加入
+                if let Some(_color) = self.players.get_color(id) {
+                    return true;
+                }
+
                 if self.players.blue.is_none() {
                     self.players.blue = Some(id);
                     self.viewers.insert(id);
@@ -223,7 +223,10 @@ impl MatchRoom {
                 }
                 self.is_player(id)
             }
-        }
+        };
+
+        self.update_incomplete_status();
+        result
     }
 
     fn join_viewers(&mut self, id: Uuid) -> bool {
@@ -231,7 +234,9 @@ impl MatchRoom {
     }
 
     fn remove(&mut self, id: Uuid) -> bool {
-        self.viewers.remove(&id)
+        let result = self.viewers.remove(&id);
+        self.update_incomplete_status();
+        result
     }
 
     fn contains(&self, id: Uuid) -> bool {
@@ -250,6 +255,30 @@ impl MatchRoom {
             return false;
         }
         true
+    }
+
+    fn is_full(&self) -> bool {
+        let blue_online = self.players.blue.map_or(false, |id| self.contains(id));
+        let green_online = self.players.green.map_or(false, |id| self.contains(id));
+        self.players.blue.is_some() && self.players.green.is_some() && blue_online && green_online
+    }
+
+    fn update_incomplete_status(&mut self) {
+        if self.is_full() {
+            self.incomplete_since = None;
+        } else if self.incomplete_since.is_none()
+            && (self.players.blue.is_some() || self.players.green.is_some())
+        {
+            self.incomplete_since = Some(Instant::now());
+        }
+    }
+
+    fn should_close_due_to_timeout(&self) -> bool {
+        if let Some(since) = self.incomplete_since {
+            since.elapsed() > Duration::from_secs(30 * 60)
+        } else {
+            false
+        }
     }
 
     fn save(self, db: web::Data<Dbpool>) -> Result<(), diesel::result::Error> {
@@ -444,7 +473,6 @@ impl MatchServer {
 
     fn get_match_info(&self, room_id: RoomId) -> Option<MatchInfo> {
         if let Some(room) = self.matches.get(&room_id)
-            && !room.is_empty()
             && !room.ended
         {
             let game_history = room.game.history.clone();
@@ -570,7 +598,6 @@ impl MatchServer {
         match room {
             Some(room) => {
                 let result = room.join_players(uuid, None);
-                println!("{} joined room {}, {}", uuid, room_id, result);
                 if !result {
                     return None;
                 }
@@ -815,13 +842,19 @@ impl MatchServer {
     }
 
     async fn check_matches(&mut self) {
-        let empty_rooms: Vec<RoomId> = self
+        let timeout_rooms: Vec<RoomId> = self
             .matches
             .iter()
-            .filter_map(|(id, room)| if room.is_empty() { Some(*id) } else { None })
+            .filter_map(|(id, room)| {
+                if room.should_close_due_to_timeout() {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
             .collect();
 
-        for room_id in empty_rooms {
+        for room_id in timeout_rooms {
             let msg = ServerMessage::end_message(room_id, None);
             self.broadcast_message(room_id, &msg).await;
             self.matches.remove(&room_id);
