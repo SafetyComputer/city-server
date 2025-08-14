@@ -37,6 +37,7 @@ pub enum MessageType {
     End,
     Join,
     Leave,
+    Resign,
 }
 
 impl ServerMessage {
@@ -85,6 +86,14 @@ impl ServerMessage {
             message_type: MessageType::Move,
             room: Some(room),
             data: serde_json::to_string(mv).unwrap(),
+        }
+    }
+
+    pub fn resign_message(uuid: Uuid, room: RoomId) -> Self {
+        Self {
+            message_type: MessageType::Resign,
+            room: Some(room),
+            data: format!("{uuid}"),
         }
     }
 }

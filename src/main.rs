@@ -122,6 +122,7 @@ async fn main() -> std::io::Result<()> {
             .service(web::post_room)
             .service(web::post_room_move)
             .service(web::post_room_chat)
+            .service(web::post_room_resign)
             .service(web::patch_room_join)
             .service(web::patch_room_leave)
             .service(web::reconnect)

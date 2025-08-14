@@ -86,6 +86,29 @@ async fn post_room_move(
     }
 }
 
+#[post("/room/resign")]
+async fn post_room_resign(
+    identity: Identity,
+    db: Data<Dbpool>,
+    handle: Data<MatchServerHandle>,
+    room_info: Json<RoomQuery>,
+) -> impl Responder {
+    let user = identity_to_user(identity, db).await;
+    match user {
+        Ok(user) => {
+            let result = handle
+                .resign(room_info.room_id.unwrap(), user.id.unwrap())
+                .await;
+            if result {
+                HttpResponse::Ok().json("success")
+            } else {
+                HttpResponse::BadRequest().json("invalid resign")
+            }
+        }
+        Err(e) => e,
+    }
+}
+
 #[post("/room/chat")]
 async fn post_room_chat(
     identity: Identity,
