@@ -73,6 +73,8 @@ async fn main() -> std::io::Result<()> {
         let mut check_connection_interval =
             tokio::time::interval(core::time::Duration::from_secs(300));
         let mut check_matches_interval = tokio::time::interval(core::time::Duration::from_secs(30));
+        let mut check_timer_interval =
+            tokio::time::interval(core::time::Duration::from_millis(100));
         loop {
             let result = tokio::select! {
                 _ = match_interval.tick() => {
@@ -85,6 +87,10 @@ async fn main() -> std::io::Result<()> {
 
                 _ = check_matches_interval.tick() => {
                     background_tx.schedule_background_task(BackgroundTask::CheckMatches)
+                }
+
+                _ = check_timer_interval.tick() => {
+                    background_tx.schedule_background_task(BackgroundTask::CheckTimer)
                 }
             };
             if result.is_err() {

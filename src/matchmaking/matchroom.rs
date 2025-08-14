@@ -10,7 +10,7 @@ use diesel::{
     query_dsl::methods::FindDsl,
 };
 
-use crate::matchmaking::Uuid;
+use crate::matchmaking::{Uuid, timer::CountdownTimer};
 
 use crate::{
     data::{
@@ -91,6 +91,9 @@ pub struct MatchRoom {
     pub ended: bool,
     pub winner: Option<Winner>,
     pub incomplete_since: Option<Instant>,
+
+    blue_timer: CountdownTimer,
+    green_timer: CountdownTimer,
 }
 
 impl MatchRoom {
@@ -109,6 +112,8 @@ impl MatchRoom {
             ended: false,
             winner: None,
             incomplete_since: Some(Instant::now()),
+            blue_timer: CountdownTimer::new(Duration::from_secs(600)),
+            green_timer: CountdownTimer::new(Duration::from_secs(600)),
         }
     }
 
@@ -255,76 +260,102 @@ impl MatchRoom {
     }
 
     pub fn make_move(&mut self, mv: Move, uuid: Uuid) -> bool {
+        if self.ended {
+            return false;
+        }
+
+        let color = self.players.get_color(uuid);
+        if color.is_none() {
+            return false;
+        }
+        let color = color.unwrap();
+
         let success = {
-            if self.game.game_over() {
-                false
-            } else {
-                let color = self.players.get_color(uuid);
-                match color {
-                    None => false,
-
-                    Some(Color::Blue) => {
-                        if self.game.blue_turn {
-                            self.game.make_move(mv, true)
-                        } else {
-                            false
-                        }
+            match color {
+                Color::Blue => {
+                    if self.game.blue_turn {
+                        self.game.make_move(mv, true)
+                    } else {
+                        false
                     }
+                }
 
-                    Some(Color::Green) => {
-                        if !self.game.blue_turn {
-                            self.game.make_move(mv, true)
-                        } else {
-                            false
-                        }
+                Color::Green => {
+                    if !self.game.blue_turn {
+                        self.game.make_move(mv, true)
+                    } else {
+                        false
                     }
                 }
             }
         };
 
-        let game_over = self.game.game_over();
-
-        if game_over {
-            self.ended = true;
-            let (winner, _) = self.game.game_result();
-            self.winner = Some(winner);
+        if success {
+            if self.game.game_over() {
+                self.ended = true;
+                let (winner, _) = self.game.game_result();
+                self.winner = Some(winner);
+            } else {
+                match color {
+                    Color::Blue => {
+                        self.green_timer.start();
+                        self.blue_timer.pause();
+                    }
+                    Color::Green => {
+                        self.blue_timer.start();
+                        self.green_timer.pause();
+                    }
+                }
+            }
         }
 
         success
     }
 
     pub fn resign(&mut self, uuid: Uuid) -> bool {
-        
+        if self.ended {
+            false
+        } else {
+            let color = self.players.get_color(uuid);
+            match color {
+                None => false,
 
-        {
-            if self.game.game_over() {
-                false
-            } else {
-                let color = self.players.get_color(uuid);
-                match color {
-                    None => false,
-
-                    Some(Color::Blue) => {
-                        if self.game.blue_turn {
-                            self.ended = true;
-                            self.winner = Some(Winner::Green);
-                            true
-                        } else {
-                            false
-                        }
+                Some(Color::Blue) => {
+                    if self.game.blue_turn {
+                        self.ended = true;
+                        self.winner = Some(Winner::Green);
+                        true
+                    } else {
+                        false
                     }
+                }
 
-                    Some(Color::Green) => {
-                        if !self.game.blue_turn {
-                            self.ended = true;
-                            self.winner = Some(Winner::Blue);
-                            true
-                        } else {
-                            false
-                        }
+                Some(Color::Green) => {
+                    if !self.game.blue_turn {
+                        self.ended = true;
+                        self.winner = Some(Winner::Blue);
+                        true
+                    } else {
+                        false
                     }
                 }
             }
         }
+    }
+
+    pub fn check_timout(&mut self) -> Option<Color> {
+        if self.blue_timer.is_expired() {
+            self.ended = true;
+            self.winner = Some(Winner::Green);
+            return Some(Color::Blue);
+        }
+
+        if self.green_timer.is_expired() {
+            self.ended = true;
+            self.winner = Some(Winner::Blue);
+            return Some(Color::Green);
+        }
+
+        None
     }
 }

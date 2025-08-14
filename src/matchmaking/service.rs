@@ -9,7 +9,11 @@ use rand::Rng;
 use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::{data::Dbpool, game::Move, matchmaking::matchroom::MatchRoom};
+use crate::{
+    data::Dbpool,
+    game::{Move, Winner},
+    matchmaking::matchroom::{Color, MatchRoom},
+};
 
 use super::handler::ServerMessage;
 
@@ -24,6 +28,7 @@ pub enum BackgroundTask {
     MatchPlayers,
     CheckConnections,
     CheckMatches,
+    CheckTimer
 }
 
 struct Sessions {
@@ -553,7 +558,8 @@ impl MatchServer {
                     match task {
                         BackgroundTask::MatchPlayers => self.try_match_players().await,
                         BackgroundTask::CheckConnections => self.check_connections().await,
-                        BackgroundTask::CheckMatches => self.check_matches().await
+                        BackgroundTask::CheckMatches => self.check_matches().await,
+                        BackgroundTask::CheckTimer => self.check_timer().await
                     }
                 }
             }
@@ -631,6 +637,30 @@ impl MatchServer {
             if let Some(room) = room {
                 let _ = room.save(self.db.clone());
             }
+        }
+    }
+
+    async fn check_timer(&mut self) {
+        let timout_matches: Vec<(RoomId, Color)> = self
+            .matches
+            .iter_mut()
+            .filter_map(|(room_id, room)| {
+                let color = room.check_timout();
+                match color {
+                    None => None,
+                    Some(Color::Blue) => Some((*room_id, Color::Blue)),
+                    Some(Color::Green) => Some((*room_id, Color::Green)),
+                }
+            })
+            .collect();
+
+        for (room, timeout_player) in timout_matches {
+            let msg = match timeout_player {
+                Color::Blue => ServerMessage::end_message(room, Some(Winner::Green)),
+                Color::Green => ServerMessage::end_message(room, Some(Winner::Blue)),
+            };
+
+            self.broadcast_message(room, &msg).await;
         }
     }
 }
