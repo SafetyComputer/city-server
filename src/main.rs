@@ -5,6 +5,7 @@ use actix_identity::IdentityMiddleware;
 use actix_session::{SessionMiddleware, config::PersistentSession, storage::CookieSessionStore};
 use actix_web::{App, HttpServer, cookie::Key};
 use city_server::matchmaking::service::BackgroundTask;
+use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use dotenvy::dotenv;
 use futures_util::try_join;
 
@@ -51,11 +52,15 @@ fn get_tls_config(tls_path: String) -> ServerConfig {
         .unwrap()
 }
 
+const MIGRATIONS: EmbeddedMigrations = embed_migrations!("./migrations");
+
 #[actix_rt::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").unwrap();
     let pool = city_server::data::Dbpool::from(&database_url);
+    let conn = &mut pool.get_connection();
+    conn.run_pending_migrations(MIGRATIONS).unwrap();
 
     let key_raw = env::var("KEY").unwrap();
     let key = get_secret_key(&key_raw);
