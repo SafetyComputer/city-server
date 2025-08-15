@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     io,
+    time::Duration,
 };
 
 use actix_web::web;
@@ -28,7 +29,7 @@ pub enum BackgroundTask {
     MatchPlayers,
     CheckConnections,
     CheckMatches,
-    CheckTimer
+    CheckTimer,
 }
 
 struct Sessions {
@@ -116,7 +117,7 @@ enum Command {
         mv: Move,
         room: RoomId,
         uuid: Uuid,
-        res_tx: oneshot::Sender<bool>,
+        res_tx: oneshot::Sender<Option<Duration>>,
     },
 
     Resign {
@@ -365,15 +366,15 @@ impl MatchServer {
         }
     }
 
-    async fn make_move(&mut self, mv: Move, room_id: RoomId, uuid: Uuid) -> bool {
+    async fn make_move(&mut self, mv: Move, room_id: RoomId, uuid: Uuid) -> Option<Duration> {
         if !self.contains(uuid) {
-            return false;
+            return None;
         }
 
         let room = self.matches.get_mut(&room_id);
 
         if room.is_none() {
-            return false;
+            return None;
         }
 
         let room = room.unwrap();
@@ -381,7 +382,7 @@ impl MatchServer {
 
         let room = self.matches.get(&room_id).unwrap();
 
-        if result {
+        if result.is_some() {
             let msg = ServerMessage::move_message(&mv, room_id);
             self.send_message_in_room(room_id, uuid, &msg).await;
         }
@@ -646,6 +647,9 @@ impl MatchServer {
             .iter_mut()
             .filter_map(|(room_id, room)| {
                 let color = room.check_timout();
+                if room.ended {
+                    return None;
+                };
                 match color {
                     None => None,
                     Some(Color::Blue) => Some((*room_id, Color::Blue)),
@@ -745,7 +749,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn make_move(&self, mv: Move, room: RoomId, uuid: Uuid) -> bool {
+    pub async fn make_move(&self, mv: Move, room: RoomId, uuid: Uuid) -> Option<Duration> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Move {

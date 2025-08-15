@@ -76,8 +76,8 @@ async fn post_room_move(
             let result = handle
                 .make_move(move_info.mv, move_info.room_id, user.id.unwrap())
                 .await;
-            if result {
-                HttpResponse::Ok().json("success")
+            if let Some(time) = result {
+                HttpResponse::Ok().json(time)
             } else {
                 HttpResponse::BadRequest().json("invalid move")
             }

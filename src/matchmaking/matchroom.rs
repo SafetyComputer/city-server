@@ -259,14 +259,14 @@ impl MatchRoom {
         })
     }
 
-    pub fn make_move(&mut self, mv: Move, uuid: Uuid) -> bool {
+    pub fn make_move(&mut self, mv: Move, uuid: Uuid) -> Option<Duration> {
         if self.ended {
-            return false;
+            return None;
         }
 
         let color = self.players.get_color(uuid);
         if color.is_none() {
-            return false;
+            return None;
         }
         let color = color.unwrap();
 
@@ -295,21 +295,22 @@ impl MatchRoom {
                 self.ended = true;
                 let (winner, _) = self.game.game_result();
                 self.winner = Some(winner);
-            } else {
-                match color {
-                    Color::Blue => {
-                        self.green_timer.start();
-                        self.blue_timer.pause();
-                    }
-                    Color::Green => {
-                        self.blue_timer.start();
-                        self.green_timer.pause();
-                    }
+            }
+            match color {
+                Color::Blue => {
+                    self.green_timer.start();
+                    self.blue_timer.pause();
+                    return Some(self.blue_timer.remaining());
+                }
+                Color::Green => {
+                    self.blue_timer.start();
+                    self.green_timer.pause();
+                    return Some(self.green_timer.remaining());
                 }
             }
         }
 
-        success
+        None
     }
 
     pub fn resign(&mut self, uuid: Uuid) -> bool {
