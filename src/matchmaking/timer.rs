@@ -9,14 +9,14 @@ use std::time::{Duration, Instant};
 /// 4. 当前运行时段 = 当前时间 - 最后一次启动时间
 pub struct CountdownTimer {
     total_duration: Duration,
-    start_time: Option<Instant>,   // 当前运行的开始时间
-    accumulated: Duration,         // 历史运行时间总和
+    start_time: Option<Instant>, // 当前运行的开始时间
+    accumulated: Duration,       // 历史运行时间总和
     is_paused: bool,
 }
 
 impl CountdownTimer {
     /// 创建新倒计时器
-    /// 
+    ///
     /// # 参数
     /// - `duration`: 倒计时的总时长
     pub fn new(duration: Duration) -> Self {
@@ -88,4 +88,3 @@ impl CountdownTimer {
         elapsed
     }
 }
-
