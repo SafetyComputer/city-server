@@ -10,7 +10,7 @@ use tokio::{sync::mpsc, time::interval};
 
 use crate::{
     game::{Move, Winner},
-    matchmaking::service::{MatchInfo, MatchServerHandle, RoomId, Uuid},
+    matchmaking::service::{MatchInfo, MatchServerHandle, RoomId, UserId},
 };
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
@@ -57,7 +57,7 @@ impl ServerMessage {
         }
     }
 
-    pub fn join_message(uuid: Uuid, room: RoomId) -> Self {
+    pub fn join_message(uuid: UserId, room: RoomId) -> Self {
         Self {
             message_type: MessageType::Join,
             room: Some(room),
@@ -65,7 +65,7 @@ impl ServerMessage {
         }
     }
 
-    pub fn leave_message(uuid: Uuid, room: RoomId) -> Self {
+    pub fn leave_message(uuid: UserId, room: RoomId) -> Self {
         Self {
             message_type: MessageType::Leave,
             room: Some(room),
@@ -89,7 +89,7 @@ impl ServerMessage {
         }
     }
 
-    pub fn resign_message(uuid: Uuid, room: RoomId) -> Self {
+    pub fn resign_message(uuid: UserId, room: RoomId) -> Self {
         Self {
             message_type: MessageType::Resign,
             room: Some(room),
@@ -106,7 +106,7 @@ impl Display for ServerMessage {
 
 pub async fn match_ws(
     match_server: MatchServerHandle,
-    uuid: Uuid,
+    uuid: UserId,
     mut session: actix_ws::Session,
     msg_stream: actix_ws::MessageStream,
 ) {

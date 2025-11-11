@@ -13,7 +13,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::{
     data::Dbpool,
     game::{Move, Winner},
-    matchmaking::matchroom::{Color, MatchRoom},
+    matchmaking::matchroom::{Color, MatchRoom, MatchRoomState, PlayerState},
 };
 
 use super::handler::ServerMessage;
@@ -22,7 +22,7 @@ pub type ConnId = u32;
 
 pub type RoomId = u32;
 
-pub type Uuid = i32;
+pub type UserId = i32;
 
 #[derive(Clone, Copy)]
 pub enum BackgroundTask {
@@ -79,67 +79,67 @@ impl Sessions {
 pub struct MatchInfo {
     pub room: RoomId,
     pub game_history: Vec<Move>,
-    pub player_blue: Option<Uuid>,
-    pub player_green: Option<Uuid>,
-    pub viewers: Vec<Uuid>,
+    pub player_blue: PlayerState,
+    pub player_green: PlayerState,
+    pub viewers: Vec<UserId>,
 }
 
 enum Command {
     Connect {
-        uuid: Uuid,
+        uuid: UserId,
         conn_tx: mpsc::UnboundedSender<String>,
         res_tx: oneshot::Sender<ConnId>,
     },
 
     Disconnect {
         conn: ConnId,
-        uuid: Uuid,
+        uuid: UserId,
     },
 
     Message {
         msg: String,
         room: RoomId,
-        uuid: Uuid,
+        uuid: UserId,
         res_tx: oneshot::Sender<()>,
     },
 
     StartMatching {
-        uuid: Uuid,
+        uuid: UserId,
         res_tx: oneshot::Sender<()>,
     },
 
     StopMatching {
-        uuid: Uuid,
+        uuid: UserId,
         res_tx: oneshot::Sender<()>,
     },
 
     Move {
         mv: Move,
         room: RoomId,
-        uuid: Uuid,
+        uuid: UserId,
         res_tx: oneshot::Sender<Option<Duration>>,
     },
 
     Resign {
         room: RoomId,
-        uuid: Uuid,
+        uuid: UserId,
         res_tx: oneshot::Sender<bool>,
     },
 
     PlayerJoin {
         room: RoomId,
-        uuid: Uuid,
+        uuid: UserId,
         res_tx: oneshot::Sender<Option<MatchInfo>>,
     },
 
     ViewerJoin {
         room: RoomId,
-        uuid: Uuid,
+        uuid: UserId,
         res_tx: oneshot::Sender<Option<MatchInfo>>,
     },
 
     CreateMatchRoom {
-        uuid: Uuid,
+        uuid: UserId,
         res_tx: oneshot::Sender<RoomId>,
     },
 
@@ -149,7 +149,7 @@ enum Command {
 
     LeaveMatchRoom {
         room: RoomId,
-        uuid: Uuid,
+        uuid: UserId,
         res_tx: oneshot::Sender<()>,
     },
 
@@ -159,15 +159,15 @@ enum Command {
     },
 
     Reconnect {
-        uuid: Uuid,
+        uuid: UserId,
         res_tx: oneshot::Sender<Vec<MatchInfo>>,
     },
 }
 
 pub struct MatchServer {
-    sessions: HashMap<Uuid, Sessions>,
+    sessions: HashMap<UserId, Sessions>,
     matches: HashMap<RoomId, MatchRoom>,
-    waitings: HashSet<Uuid>,
+    waitings: HashSet<UserId>,
     db: web::Data<Dbpool>,
     cmd_rx: mpsc::UnboundedReceiver<Command>,
     task_rx: mpsc::UnboundedReceiver<BackgroundTask>,
@@ -192,7 +192,7 @@ impl MatchServer {
         )
     }
 
-    fn contains(&self, uuid: Uuid) -> bool {
+    fn contains(&self, uuid: UserId) -> bool {
         match self.sessions.get(&uuid) {
             Some(sessions) => !sessions.is_empty(),
             None => false,
@@ -200,9 +200,7 @@ impl MatchServer {
     }
 
     fn get_match_info(&self, room_id: RoomId) -> Option<MatchInfo> {
-        if let Some(room) = self.matches.get(&room_id)
-            && !room.ended
-        {
+        if let Some(room) = self.matches.get(&room_id) {
             let game_history = room.game.history.clone();
             let info = MatchInfo {
                 room: room_id,
@@ -217,7 +215,7 @@ impl MatchServer {
         }
     }
 
-    async fn send_message_in_room(&self, room: RoomId, uuid: Uuid, msg: &ServerMessage) {
+    async fn send_message_in_room(&self, room: RoomId, uuid: UserId, msg: &ServerMessage) {
         if let Some(room) = self.matches.get(&room) {
             if !room.contains(uuid) {
                 return;
@@ -242,7 +240,7 @@ impl MatchServer {
         }
     }
 
-    async fn connect(&mut self, uuid: Uuid, tx: mpsc::UnboundedSender<String>) -> ConnId {
+    async fn connect(&mut self, uuid: UserId, tx: mpsc::UnboundedSender<String>) -> ConnId {
         let mut rng = rand::rng();
         let conn_id = loop {
             let result: ConnId = rng.random();
@@ -269,15 +267,24 @@ impl MatchServer {
         conn_id
     }
 
-    async fn start_matching(&mut self, uuid: Uuid) {
+    async fn start_matching(&mut self, uuid: UserId) {
         self.waitings.insert(uuid);
     }
 
-    async fn stop_matching(&mut self, uuid: Uuid) {
+    async fn stop_matching(&mut self, uuid: UserId) {
         self.waitings.remove(&uuid);
     }
 
-    async fn _create_match_room(&mut self, blue: Option<Uuid>, green: Option<Uuid>) -> RoomId {
+    async fn rematch(&mut self, room_id: RoomId, uuid: UserId) -> bool {
+        let room = self.matches.get_mut(&room_id);
+        if let Some(room) = room {
+            room.join_rematch(uuid)
+        } else {
+            false
+        }
+    }
+
+    async fn _create_match_room(&mut self, blue: Option<UserId>, green: Option<UserId>) -> RoomId {
         let mut rng = rand::rng();
         let match_id = loop {
             let result: RoomId = rng.random();
@@ -291,7 +298,7 @@ impl MatchServer {
         match_id
     }
 
-    async fn create_match_room(&mut self, uuid: Uuid) -> RoomId {
+    async fn create_match_room(&mut self, uuid: UserId) -> RoomId {
         self.waitings.remove(&uuid);
         let blue: bool = rand::rng().random();
         if blue {
@@ -310,7 +317,7 @@ impl MatchServer {
         result
     }
 
-    async fn leave_match_room(&mut self, room_id: RoomId, uuid: Uuid) {
+    async fn leave_match_room(&mut self, room_id: RoomId, uuid: UserId) {
         if let Some(room) = self.matches.get_mut(&room_id) {
             room.remove(uuid);
             let msg = ServerMessage::leave_message(uuid, room_id);
@@ -318,7 +325,11 @@ impl MatchServer {
         }
     }
 
-    async fn join_players_match_room(&mut self, room_id: RoomId, uuid: Uuid) -> Option<MatchInfo> {
+    async fn join_players_match_room(
+        &mut self,
+        room_id: RoomId,
+        uuid: UserId,
+    ) -> Option<MatchInfo> {
         if !self.contains(uuid) {
             return None;
         }
@@ -345,7 +356,11 @@ impl MatchServer {
         }
     }
 
-    async fn join_viewers_match_room(&mut self, room_id: RoomId, uuid: Uuid) -> Option<MatchInfo> {
+    async fn join_viewers_match_room(
+        &mut self,
+        room_id: RoomId,
+        uuid: UserId,
+    ) -> Option<MatchInfo> {
         if !self.contains(uuid) {
             return None;
         }
@@ -366,7 +381,7 @@ impl MatchServer {
         }
     }
 
-    async fn make_move(&mut self, mv: Move, room_id: RoomId, uuid: Uuid) -> Option<Duration> {
+    async fn make_move(&mut self, mv: Move, room_id: RoomId, uuid: UserId) -> Option<Duration> {
         if !self.contains(uuid) {
             return None;
         }
@@ -387,15 +402,15 @@ impl MatchServer {
             self.send_message_in_room(room_id, uuid, &msg).await;
         }
 
-        if room.ended {
-            let msg = ServerMessage::end_message(room_id, room.winner);
+        if let MatchRoomState::Ended(winner) = room.state {
+            let msg = ServerMessage::end_message(room_id, Some(winner));
             self.send_message_in_room(room_id, uuid, &msg).await;
         }
 
         result
     }
 
-    async fn resign(&mut self, room_id: RoomId, uuid: Uuid) -> bool {
+    async fn resign(&mut self, room_id: RoomId, uuid: UserId) -> bool {
         if !self.contains(uuid) {
             return false;
         }
@@ -416,15 +431,15 @@ impl MatchServer {
             self.send_message_in_room(room_id, uuid, &msg).await;
         }
 
-        if room.ended {
-            let msg = ServerMessage::end_message(room_id, room.winner);
+        if let MatchRoomState::Ended(winner) = room.state {
+            let msg = ServerMessage::end_message(room_id, Some(winner));
             self.send_message_in_room(room_id, uuid, &msg).await;
         }
 
         result
     }
 
-    async fn remove_user(&mut self, uuid: Uuid) {
+    async fn remove_user(&mut self, uuid: UserId) {
         self.waitings.remove(&uuid);
         self.sessions.remove(&uuid);
         let rooms: Vec<RoomId> = self
@@ -444,7 +459,7 @@ impl MatchServer {
         }
     }
 
-    async fn disconnect(&mut self, conn: ConnId, uuid: Uuid) {
+    async fn disconnect(&mut self, conn: ConnId, uuid: UserId) {
         let sessions = self.sessions.get_mut(&uuid).unwrap();
         sessions.remove(conn);
         if sessions.is_empty() {
@@ -452,7 +467,7 @@ impl MatchServer {
         }
     }
 
-    async fn reconnect(&mut self, uuid: Uuid) -> Vec<MatchInfo> {
+    async fn reconnect(&mut self, uuid: UserId) -> Vec<MatchInfo> {
         let mut result = Vec::new();
         let rooms: Vec<RoomId> = self
             .matches
@@ -569,7 +584,7 @@ impl MatchServer {
 
     async fn try_match_players(&mut self) {
         if self.waitings.len() >= 2 {
-            let mut players: VecDeque<Uuid> = self.waitings.drain().collect();
+            let mut players: VecDeque<UserId> = self.waitings.drain().collect();
 
             while players.len() >= 2 {
                 let player_blue = players.pop_front().unwrap();
@@ -590,7 +605,7 @@ impl MatchServer {
     }
 
     async fn check_connections(&mut self) {
-        let dead_users: Vec<Uuid> = self
+        let dead_users: Vec<UserId> = self
             .sessions
             .iter_mut()
             .filter_map(|(uuid, sessions)| {
@@ -611,14 +626,12 @@ impl MatchServer {
     async fn check_matches(&mut self) {
         let timeout_rooms: Vec<RoomId> = self
             .matches
-            .iter()
-            .filter_map(|(id, room)| {
-                if room.should_close_due_to_timeout() {
-                    Some(*id)
-                } else {
-                    None
-                }
-            })
+            .iter_mut()
+            .filter_map(
+                |(id, room)| {
+                    if room.check_timout() { Some(*id) } else { None }
+                },
+            )
             .collect();
 
         for room_id in timeout_rooms {
@@ -630,7 +643,13 @@ impl MatchServer {
         let ended_rooms: Vec<RoomId> = self
             .matches
             .iter()
-            .filter_map(|(id, room)| if room.ended { Some(*id) } else { None })
+            .filter_map(|(id, room)| {
+                if let MatchRoomState::Ended(_) = room.state {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         for room_id in ended_rooms {
@@ -646,8 +665,8 @@ impl MatchServer {
             .matches
             .iter_mut()
             .filter_map(|(room_id, room)| {
-                let color = room.check_timout();
-                if room.ended {
+                let color = room.check_player_timout();
+                if let MatchRoomState::Ended(_) = room.state {
                     return None;
                 };
                 match color {
@@ -676,7 +695,7 @@ pub struct MatchServerHandle {
 }
 
 impl MatchServerHandle {
-    pub async fn connect(&self, uuid: Uuid, conn_tx: mpsc::UnboundedSender<String>) -> ConnId {
+    pub async fn connect(&self, uuid: UserId, conn_tx: mpsc::UnboundedSender<String>) -> ConnId {
         let (res_tx, res_rx) = oneshot::channel();
 
         self.cmd_tx
@@ -690,7 +709,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn send_message(&self, room: RoomId, uuid: Uuid, msg: impl Into<String>) {
+    pub async fn send_message(&self, room: RoomId, uuid: UserId, msg: impl Into<String>) {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Message {
@@ -703,13 +722,13 @@ impl MatchServerHandle {
         res_rx.await.unwrap();
     }
 
-    pub fn disconnect(&self, conn: ConnId, uuid: Uuid) {
+    pub fn disconnect(&self, conn: ConnId, uuid: UserId) {
         self.cmd_tx
             .send(Command::Disconnect { conn, uuid })
             .unwrap();
     }
 
-    pub async fn start_matching(&self, uuid: Uuid) {
+    pub async fn start_matching(&self, uuid: UserId) {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::StartMatching { uuid, res_tx })
@@ -717,7 +736,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap();
     }
 
-    pub async fn stop_matching(&self, uuid: Uuid) {
+    pub async fn stop_matching(&self, uuid: UserId) {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::StopMatching { uuid, res_tx })
@@ -725,7 +744,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap();
     }
 
-    pub async fn join_viewers(&self, room: RoomId, uuid: Uuid) -> Option<MatchInfo> {
+    pub async fn join_viewers(&self, room: RoomId, uuid: UserId) -> Option<MatchInfo> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::ViewerJoin { room, uuid, res_tx })
@@ -733,7 +752,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn join_players(&self, room: RoomId, uuid: Uuid) -> Option<MatchInfo> {
+    pub async fn join_players(&self, room: RoomId, uuid: UserId) -> Option<MatchInfo> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::PlayerJoin { room, uuid, res_tx })
@@ -741,7 +760,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn create_match_room(&self, uuid: Uuid) -> RoomId {
+    pub async fn create_match_room(&self, uuid: UserId) -> RoomId {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::CreateMatchRoom { uuid, res_tx })
@@ -749,7 +768,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn make_move(&self, mv: Move, room: RoomId, uuid: Uuid) -> Option<Duration> {
+    pub async fn make_move(&self, mv: Move, room: RoomId, uuid: UserId) -> Option<Duration> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Move {
@@ -762,7 +781,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn resign(&self, room: RoomId, uuid: Uuid) -> bool {
+    pub async fn resign(&self, room: RoomId, uuid: UserId) -> bool {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Resign { room, uuid, res_tx })
@@ -776,7 +795,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn leave_match_room(&self, room: RoomId, uuid: Uuid) {
+    pub async fn leave_match_room(&self, room: RoomId, uuid: UserId) {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::LeaveMatchRoom { room, uuid, res_tx })
@@ -792,7 +811,7 @@ impl MatchServerHandle {
         res_rx.await.unwrap()
     }
 
-    pub async fn reconnect(&self, uuid: Uuid) -> Vec<MatchInfo> {
+    pub async fn reconnect(&self, uuid: UserId) -> Vec<MatchInfo> {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Reconnect { uuid, res_tx })

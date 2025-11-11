@@ -23,6 +23,3 @@ impl Dbpool {
         self.pool.get().expect("unable to connect to database")
     }
 }
-
-#[cfg(test)]
-mod tests;

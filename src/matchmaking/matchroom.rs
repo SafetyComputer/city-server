@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    time::{Duration, Instant},
-};
+use std::{collections::HashSet, time::Duration};
 
 use actix_web::web;
 use diesel::{
@@ -9,8 +6,9 @@ use diesel::{
     dsl::{insert_into, update},
     query_dsl::methods::FindDsl,
 };
+use serde::Serialize;
 
-use crate::matchmaking::{Uuid, timer::CountdownTimer};
+use crate::matchmaking::{UserId, timer::CountdownTimer};
 
 use crate::{
     data::{
@@ -37,145 +35,220 @@ pub enum Color {
     Green,
 }
 
+#[derive(Clone, Copy, Serialize)]
+pub enum PlayerState {
+    Matching,
+    Ready(UserId),
+    Left(UserId),
+    WaitingForRematch(UserId),
+}
+
+impl PlayerState {
+    pub fn get_uuid(&self) -> Option<UserId> {
+        match self {
+            Self::Matching => None,
+            Self::Ready(id) | Self::Left(id) | Self::WaitingForRematch(id) => Some(*id),
+        }
+    }
+    pub fn is_ready(&self) -> bool {
+        match self {
+            Self::Ready(_) => true,
+            _ => false,
+        }
+    }
+}
+
 pub struct Players {
-    pub blue: Option<Uuid>,
-    pub green: Option<Uuid>,
+    pub blue: PlayerState,
+    pub green: PlayerState,
 }
 
 impl Players {
-    fn get_color(&self, id: Uuid) -> Option<Color> {
-        match self.blue {
-            None => {}
-            Some(blue_id) => {
-                if blue_id == id {
-                    return Some(Color::Blue);
-                }
-            }
+    fn get_color(&self, id: UserId) -> Option<Color> {
+        if let Some(blue_id) = self.blue.get_uuid()
+            && blue_id == id
+        {
+            return Some(Color::Blue);
         }
-        match self.green {
-            None => {}
-            Some(green_id) => {
-                if green_id == id {
-                    return Some(Color::Green);
-                }
-            }
+        if let Some(green_id) = self.green.get_uuid()
+            && green_id == id
+        {
+            return Some(Color::Green);
         }
         None
     }
 
-    fn contains(&self, id: Uuid) -> bool {
-        match self.blue {
-            None => {}
-            Some(blue_id) => {
-                if blue_id == id {
-                    return true;
-                }
-            }
+    fn contains(&self, id: UserId) -> bool {
+        if let Some(blue_id) = self.blue.get_uuid()
+            && blue_id == id
+        {
+            return true;
         }
-        match self.green {
-            None => {}
-            Some(green_id) => {
-                if green_id == id {
-                    return true;
-                }
-            }
+        if let Some(green_id) = self.green.get_uuid()
+            && green_id == id
+        {
+            return true;
         }
         false
     }
 }
 
+pub enum MatchRoomState {
+    Matching,
+    Ready,
+    PlayerLeft(CountdownTimer),
+    WaitingForRematch(CountdownTimer),
+    Ended(Winner),
+    TimeOut,
+}
+
 pub struct MatchRoom {
     pub game: Game,
     pub players: Players,
-    pub viewers: HashSet<Uuid>,
-    pub ended: bool,
-    pub winner: Option<Winner>,
-    pub incomplete_since: Option<Instant>,
-
+    pub viewers: HashSet<UserId>,
+    pub state: MatchRoomState,
+    // pub ended: bool,
+    // pub winner: Option<Winner>,
+    // pub incomplete_since: Option<Instant>,
     blue_timer: CountdownTimer,
     green_timer: CountdownTimer,
 }
 
 impl MatchRoom {
-    pub fn new(blue: Option<Uuid>, green: Option<Uuid>) -> Self {
+    pub fn new(blue: Option<UserId>, green: Option<UserId>) -> Self {
         let mut viewers = HashSet::with_capacity(2);
-        if let Some(blue_id) = blue {
+
+        let blue_state = if let Some(blue_id) = blue {
             viewers.insert(blue_id);
-        }
-        if let Some(green_id) = green {
+            PlayerState::Ready(blue_id)
+        } else {
+            PlayerState::Matching
+        };
+        let green_state = if let Some(green_id) = green {
             viewers.insert(green_id);
-        }
+            PlayerState::Ready(green_id)
+        } else {
+            PlayerState::Matching
+        };
         Self {
             game: Game::new(7, 7),
-            players: Players { blue, green },
+            players: Players {
+                blue: blue_state,
+                green: green_state,
+            },
             viewers,
-            ended: false,
-            winner: None,
-            incomplete_since: Some(Instant::now()),
+            state: if blue.is_none() || green.is_none() {
+                MatchRoomState::Matching
+            } else {
+                MatchRoomState::Ready
+            },
             blue_timer: CountdownTimer::new(Duration::from_secs(600)),
             green_timer: CountdownTimer::new(Duration::from_secs(600)),
         }
     }
 
-    pub fn is_player(&self, id: Uuid) -> bool {
+    pub fn is_player(&self, id: UserId) -> bool {
         self.players.contains(id)
     }
 
-    pub fn join_players(&mut self, id: Uuid, color: Option<Color>) -> bool {
+    pub fn join_players(&mut self, id: UserId, color: Option<Color>) -> bool {
         let result = match color {
-            Some(Color::Blue) => {
-                if self.players.blue.is_none() {
-                    self.players.blue = Some(id);
-                    self.viewers.insert(id);
+            Some(Color::Blue) => match self.players.blue {
+                PlayerState::Matching => {
+                    self.players.blue = PlayerState::Ready(id);
                     true
-                } else {
-                    self.players.blue.unwrap() == id
                 }
-            }
-            Some(Color::Green) => {
-                if self.players.green.is_none() {
-                    self.players.green = Some(id);
-                    self.viewers.insert(id);
+                PlayerState::Left(blue_id) => {
+                    if blue_id == id {
+                        self.players.blue = PlayerState::Ready(id);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                PlayerState::Ready(blue_id) | PlayerState::WaitingForRematch(blue_id) => {
+                    blue_id == id
+                }
+            },
+            Some(Color::Green) => match self.players.green {
+                PlayerState::Matching => {
+                    self.players.green = PlayerState::Ready(id);
                     true
-                } else {
-                    self.players.green.unwrap() == id
                 }
-            }
+                PlayerState::Left(green_id) => {
+                    if green_id == id {
+                        self.players.green = PlayerState::Ready(id);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                PlayerState::Ready(green_id) | PlayerState::WaitingForRematch(green_id) => {
+                    green_id == id
+                }
+            },
             None => {
                 // 避免重复加入
-                if self.players.get_color(id).is_some() {
-                    return true;
+                if self.is_player(id) {
+                    true
+                } else {
+                    if let PlayerState::Matching = self.players.blue {
+                        self.players.blue = PlayerState::Ready(id);
+                        self.viewers.insert(id);
+                        true
+                    } else {
+                        if let PlayerState::Matching = self.players.green {
+                            self.players.green = PlayerState::Ready(id);
+                            self.viewers.insert(id);
+                            true
+                        } else {
+                            false
+                        }
+                    }
                 }
-
-                if self.players.blue.is_none() {
-                    self.players.blue = Some(id);
-                    self.viewers.insert(id);
-                    return true;
-                }
-                if self.players.green.is_none() {
-                    self.players.green = Some(id);
-                    self.viewers.insert(id);
-                    return true;
-                }
-                self.is_player(id)
             }
         };
+        if self.players.blue.is_ready() && self.players.green.is_ready() {
+            self.state = MatchRoomState::Ready;
+        }
 
-        self.update_incomplete_status();
         result
     }
 
-    pub fn join_viewers(&mut self, id: Uuid) -> bool {
+    pub fn join_viewers(&mut self, id: UserId) -> bool {
         self.viewers.insert(id)
     }
 
-    pub fn remove(&mut self, id: Uuid) -> bool {
+    pub fn join_rematch(&mut self, id: UserId) -> bool {
+        if let Some(color) = self.players.get_color(id) {
+            match color {
+                Color::Blue => self.players.blue = PlayerState::WaitingForRematch(id),
+                Color::Green => self.players.green = PlayerState::WaitingForRematch(id),
+            }
+            let mut timer = CountdownTimer::new(Duration::from_secs(60 * 3));
+            timer.start();
+            self.state = MatchRoomState::WaitingForRematch(timer);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn remove(&mut self, id: UserId) -> bool {
+        if let Some(color) = self.players.get_color(id) {
+            match color {
+                Color::Blue => self.players.blue = PlayerState::Left(id),
+                Color::Green => self.players.green = PlayerState::Left(id),
+            }
+            let mut timer = CountdownTimer::new(Duration::from_secs(60 * 5));
+            timer.start();
+            self.state = MatchRoomState::PlayerLeft(timer);
+        }
         let result = self.viewers.remove(&id);
-        self.update_incomplete_status();
         result
     }
 
-    pub fn contains(&self, id: Uuid) -> bool {
+    pub fn contains(&self, id: UserId) -> bool {
         self.viewers.contains(&id)
     }
 
@@ -193,48 +266,36 @@ impl MatchRoom {
     //     true
     // }
 
-    pub fn is_full(&self) -> bool {
-        let blue_online = self.players.blue.is_some_and(|id| self.contains(id));
-        let green_online = self.players.green.is_some_and(|id| self.contains(id));
-        self.players.blue.is_some() && self.players.green.is_some() && blue_online && green_online
-    }
-
-    pub fn update_incomplete_status(&mut self) {
-        if self.is_full() {
-            self.incomplete_since = None;
-        } else if self.incomplete_since.is_none()
-            && (self.players.blue.is_some() || self.players.green.is_some())
-        {
-            self.incomplete_since = Some(Instant::now());
-        }
-    }
-
-    pub fn should_close_due_to_timeout(&self) -> bool {
-        if let Some(since) = self.incomplete_since {
-            since.elapsed() > Duration::from_secs(30 * 60)
-        } else {
-            false
+    pub fn is_ready(&self) -> bool {
+        match self.state {
+            MatchRoomState::Ready => true,
+            _ => false,
         }
     }
 
     pub fn save(self, db: web::Data<Dbpool>) -> Result<(), diesel::result::Error> {
         use crate::data::schema::matches;
         use crate::data::schema::users;
+        let winner = if let MatchRoomState::Ended(winner) = self.state {
+            winner
+        } else {
+            return Ok(());
+        };
         let conn = &mut db.get_connection();
-        let blue_id = self.players.blue.unwrap();
-        let green_id = self.players.green.unwrap();
+        let blue_id = self.players.blue.get_uuid().unwrap();
+        let green_id = self.players.green.get_uuid().unwrap();
         let player_blue: User = users::table.find(blue_id).first(conn)?;
         let player_green: User = users::table.find(green_id).first(conn)?;
         let result = Match {
             id: None,
             player_blue: blue_id,
             player_green: green_id,
-            winner: self.winner.unwrap(),
+            winner: winner,
             history: serde_json::to_string(&self.game.history).unwrap(),
         };
         conn.transaction(|conn| {
-            match self.winner {
-                Some(Winner::Blue) => {
+            match winner {
+                Winner::Blue => {
                     let (winner_elo, loser_elo) = elo_update(player_blue.elo, player_green.elo);
                     update(users::table.find(blue_id))
                         .set(users::dsl::elo.eq(winner_elo))
@@ -243,7 +304,7 @@ impl MatchRoom {
                         .set(users::dsl::elo.eq(loser_elo))
                         .execute(conn)?;
                 }
-                Some(Winner::Green) => {
+                Winner::Green => {
                     let (winner_elo, loser_elo) = elo_update(player_green.elo, player_blue.elo);
                     update(users::table.find(blue_id))
                         .set(users::dsl::elo.eq(loser_elo))
@@ -259,8 +320,8 @@ impl MatchRoom {
         })
     }
 
-    pub fn make_move(&mut self, mv: Move, uuid: Uuid) -> Option<Duration> {
-        if self.ended {
+    pub fn make_move(&mut self, mv: Move, uuid: UserId) -> Option<Duration> {
+        if let MatchRoomState::Ended(_) = self.state {
             return None;
         }
 
@@ -292,9 +353,8 @@ impl MatchRoom {
 
         if success {
             if self.game.game_over() {
-                self.ended = true;
                 let (winner, _) = self.game.game_result();
-                self.winner = Some(winner);
+                self.state = MatchRoomState::Ended(winner);
             }
             match color {
                 Color::Blue => {
@@ -313,8 +373,8 @@ impl MatchRoom {
         None
     }
 
-    pub fn resign(&mut self, uuid: Uuid) -> bool {
-        if self.ended {
+    pub fn resign(&mut self, uuid: UserId) -> bool {
+        if let MatchRoomState::Ended(_) = self.state {
             false
         } else {
             let color = self.players.get_color(uuid);
@@ -323,8 +383,7 @@ impl MatchRoom {
 
                 Some(Color::Blue) => {
                     if self.game.blue_turn {
-                        self.ended = true;
-                        self.winner = Some(Winner::Green);
+                        self.state = MatchRoomState::Ended(Winner::Green);
                         true
                     } else {
                         false
@@ -333,8 +392,7 @@ impl MatchRoom {
 
                 Some(Color::Green) => {
                     if !self.game.blue_turn {
-                        self.ended = true;
-                        self.winner = Some(Winner::Blue);
+                        self.state = MatchRoomState::Ended(Winner::Blue);
                         true
                     } else {
                         false
@@ -344,19 +402,30 @@ impl MatchRoom {
         }
     }
 
-    pub fn check_timout(&mut self) -> Option<Color> {
+    pub fn check_player_timout(&mut self) -> Option<Color> {
         if self.blue_timer.is_expired() {
-            self.ended = true;
-            self.winner = Some(Winner::Green);
+            self.state = MatchRoomState::Ended(Winner::Green);
             return Some(Color::Blue);
         }
 
         if self.green_timer.is_expired() {
-            self.ended = true;
-            self.winner = Some(Winner::Blue);
+            self.state = MatchRoomState::Ended(Winner::Blue);
             return Some(Color::Green);
         }
 
         None
+    }
+
+    pub fn check_timout(&mut self) -> bool {
+        let result = match self.state {
+            MatchRoomState::WaitingForRematch(ref timer) => timer.is_expired(),
+            MatchRoomState::PlayerLeft(ref timer) => timer.is_expired(),
+            MatchRoomState::TimeOut => true,
+            _ => false,
+        };
+        if result {
+            self.state = MatchRoomState::TimeOut;
+        }
+        result
     }
 }
