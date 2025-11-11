@@ -107,9 +107,6 @@ pub struct MatchRoom {
     pub players: Players,
     pub viewers: HashSet<UserId>,
     pub state: MatchRoomState,
-    // pub ended: bool,
-    // pub winner: Option<Winner>,
-    // pub incomplete_since: Option<Instant>,
     blue_timer: CountdownTimer,
     green_timer: CountdownTimer,
 }
