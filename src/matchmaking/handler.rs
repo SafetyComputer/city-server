@@ -5,23 +5,17 @@ use std::{
 
 use actix_ws::AggregatedMessage;
 use futures_util::StreamExt as _;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::{sync::mpsc, time::interval};
 
 use crate::{
     game::{Move, Winner},
+    matchmaking::matchroom::MatchInfo,
     matchmaking::service::{MatchServerHandle, RoomId, UserId},
-    matchmaking::matchroom::MatchInfo
 };
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(10);
-
-#[derive(Deserialize)]
-enum Command {
-    SendMessage,
-    Move,
-}
 
 #[derive(Serialize)]
 pub struct ServerMessage {

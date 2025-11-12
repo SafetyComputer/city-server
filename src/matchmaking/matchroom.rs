@@ -1,6 +1,5 @@
 use std::{collections::HashSet, time::Duration};
 
-use actix_web::web;
 use diesel::{
     Connection, ExpressionMethods as _, RunQueryDsl,
     dsl::{insert_into, update},
@@ -51,10 +50,7 @@ impl PlayerState {
         }
     }
     pub fn is_ready(&self) -> bool {
-        match self {
-            Self::Ready(_) => true,
-            _ => false,
-        }
+        matches!(self, Self::Ready(_))
     }
 }
 
@@ -207,20 +203,16 @@ impl MatchRoom {
                 // 避免重复加入
                 if self.is_player(id) {
                     true
+                } else if let PlayerState::Matching = self.players.blue {
+                    self.players.blue = PlayerState::Ready(id);
+                    self.viewers.insert(id);
+                    true
+                } else if let PlayerState::Matching = self.players.green {
+                    self.players.green = PlayerState::Ready(id);
+                    self.viewers.insert(id);
+                    true
                 } else {
-                    if let PlayerState::Matching = self.players.blue {
-                        self.players.blue = PlayerState::Ready(id);
-                        self.viewers.insert(id);
-                        true
-                    } else {
-                        if let PlayerState::Matching = self.players.green {
-                            self.players.green = PlayerState::Ready(id);
-                            self.viewers.insert(id);
-                            true
-                        } else {
-                            false
-                        }
-                    }
+                    false
                 }
             }
         };
@@ -260,8 +252,8 @@ impl MatchRoom {
             timer.start();
             self.state = MatchRoomState::PlayerLeft(timer);
         }
-        let result = self.viewers.remove(&id);
-        result
+
+        self.viewers.remove(&id)
     }
 
     pub fn contains(&self, id: UserId) -> bool {
@@ -269,10 +261,7 @@ impl MatchRoom {
     }
 
     pub fn is_ready(&self) -> bool {
-        match self.state {
-            MatchRoomState::Ready => true,
-            _ => false,
-        }
+        matches!(self.state, MatchRoomState::Ready)
     }
 
     pub fn save(&self, db: &Dbpool) -> Result<(), diesel::result::Error> {
@@ -292,7 +281,7 @@ impl MatchRoom {
             id: None,
             player_blue: blue_id,
             player_green: green_id,
-            winner: winner,
+            winner,
             history: serde_json::to_string(&self.game.history).unwrap(),
         };
         conn.transaction(|conn| {
@@ -328,9 +317,7 @@ impl MatchRoom {
         }
 
         let color = self.players.get_color(uuid);
-        if color.is_none() {
-            return None;
-        }
+        color?;
         let color = color.unwrap();
 
         let success = {
@@ -438,7 +425,7 @@ impl MatchRoom {
                 self.check_player_timout();
             }
             MatchRoomState::Ended(_) => {
-                self.save(db);
+                let _ = self.save(db);
                 let mut timer = CountdownTimer::new(Duration::from_secs(60 * 3));
                 timer.start();
                 self.state = MatchRoomState::WaitingForRematch(timer)

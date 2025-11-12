@@ -260,7 +260,7 @@ impl Eq for EvaluatedMove {}
 
 impl PartialOrd for EvaluatedMove {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.ev.cmp(&other.ev))
+        Some(self.cmp(other))
     }
 }
 

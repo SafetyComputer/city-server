@@ -11,8 +11,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     data::Dbpool,
-    game::{Move, Winner},
-    matchmaking::matchroom::{Color, MatchInfo, MatchRoom, MatchRoomState},
+    game::Move,
+    matchmaking::matchroom::{MatchInfo, MatchRoom, MatchRoomState},
 };
 
 use super::handler::ServerMessage;
@@ -307,11 +307,7 @@ impl MatchServer {
         }
     }
 
-    fn join_players_match_room(
-        &mut self,
-        room_id: RoomId,
-        uuid: UserId,
-    ) -> Option<MatchInfo> {
+    fn join_players_match_room(&mut self, room_id: RoomId, uuid: UserId) -> Option<MatchInfo> {
         if !self.contains(uuid) {
             return None;
         }
@@ -338,11 +334,7 @@ impl MatchServer {
         }
     }
 
-    fn join_viewers_match_room(
-        &mut self,
-        room_id: RoomId,
-        uuid: UserId,
-    ) -> Option<MatchInfo> {
+    fn join_viewers_match_room(&mut self, room_id: RoomId, uuid: UserId) -> Option<MatchInfo> {
         if !self.contains(uuid) {
             return None;
         }
@@ -370,9 +362,7 @@ impl MatchServer {
 
         let room = self.matches.get_mut(&room_id);
 
-        if room.is_none() {
-            return None;
-        }
+        room.as_ref()?;
 
         let room = room.unwrap();
         let result = room.make_move(mv, uuid);
@@ -570,8 +560,7 @@ impl MatchServer {
             while players.len() >= 2 {
                 let player_blue = players.pop_front().unwrap();
                 let player_green = players.pop_front().unwrap();
-                let match_id = self
-                    ._create_match_room(Some(player_blue), Some(player_green));
+                let match_id = self._create_match_room(Some(player_blue), Some(player_green));
                 let info = self.get_match_info(match_id).unwrap();
                 let msg = ServerMessage::match_message(&info, match_id);
                 self.broadcast_message(match_id, &msg);
@@ -604,18 +593,18 @@ impl MatchServer {
     }
 
     fn check_matches(&mut self) {
-        let mut timout_rooms= Vec::new();
+        let mut timout_rooms = Vec::new();
         let mut messages = Vec::new();
         for (room_id, room) in self.matches.iter_mut() {
             let msg = match room.check_self(&self.db) {
-                MatchRoomState::Ended(winner) => {
-                    ServerMessage::end_message(*room_id, Some(winner))
-                }
+                MatchRoomState::Ended(winner) => ServerMessage::end_message(*room_id, Some(winner)),
                 MatchRoomState::TimeOut => {
                     timout_rooms.push(*room_id);
                     ServerMessage::end_message(*room_id, None)
                 }
-                _ => { continue; }
+                _ => {
+                    continue;
+                }
             };
             messages.push((*room_id, msg));
         }
