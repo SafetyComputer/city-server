@@ -8,7 +8,7 @@ use diesel::{
 };
 use serde::Serialize;
 
-use crate::matchmaking::{UserId, timer::CountdownTimer};
+use crate::matchmaking::{RoomId, UserId, timer::CountdownTimer};
 
 use crate::{
     data::{
@@ -93,6 +93,7 @@ impl Players {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum MatchRoomState {
     Matching,
     Ready,
@@ -103,10 +104,10 @@ pub enum MatchRoomState {
 }
 
 pub struct MatchRoom {
-    pub game: Game,
-    pub players: Players,
-    pub viewers: HashSet<UserId>,
-    pub state: MatchRoomState,
+    game: Game,
+    players: Players,
+    viewers: HashSet<UserId>,
+    state: MatchRoomState,
     blue_timer: CountdownTimer,
     green_timer: CountdownTimer,
 }
@@ -142,6 +143,24 @@ impl MatchRoom {
             blue_timer: CountdownTimer::new(Duration::from_secs(600)),
             green_timer: CountdownTimer::new(Duration::from_secs(600)),
         }
+    }
+
+    pub fn get_info(&self, id: RoomId) -> MatchInfo {
+        MatchInfo {
+            room: id,
+            game_history: self.game.history.clone(),
+            player_blue: self.players.blue,
+            player_green: self.players.green,
+            viewers: self.viewers.iter().copied().collect(),
+        }
+    }
+
+    pub fn get_viewers<'a>(&'a self) -> std::collections::hash_set::Iter<'a, UserId> {
+        self.viewers.iter()
+    }
+
+    pub fn get_state(&self) -> &MatchRoomState {
+        &self.state
     }
 
     pub fn is_player(&self, id: UserId) -> bool {
@@ -249,20 +268,6 @@ impl MatchRoom {
         self.viewers.contains(&id)
     }
 
-    // fn is_empty(&self) -> bool {
-    //     if let Some(blue) = self.players.blue
-    //         && self.contains(blue)
-    //     {
-    //         return false;
-    //     }
-    //     if let Some(green) = self.players.green
-    //         && self.contains(green)
-    //     {
-    //         return false;
-    //     }
-    //     true
-    // }
-
     pub fn is_ready(&self) -> bool {
         match self.state {
             MatchRoomState::Ready => true,
@@ -270,7 +275,7 @@ impl MatchRoom {
         }
     }
 
-    pub fn save(self, db: web::Data<Dbpool>) -> Result<(), diesel::result::Error> {
+    pub fn save(&self, db: &Dbpool) -> Result<(), diesel::result::Error> {
         use crate::data::schema::matches;
         use crate::data::schema::users;
         let winner = if let MatchRoomState::Ended(winner) = self.state {
@@ -425,4 +430,33 @@ impl MatchRoom {
         }
         result
     }
+
+    pub fn check_self(&mut self, db: &Dbpool) -> MatchRoomState {
+        match self.state {
+            MatchRoomState::Matching => {}
+            MatchRoomState::Ready => {
+                self.check_player_timout();
+            }
+            MatchRoomState::Ended(_) => {
+                self.save(db);
+                let mut timer = CountdownTimer::new(Duration::from_secs(60 * 3));
+                timer.start();
+                self.state = MatchRoomState::WaitingForRematch(timer)
+            }
+            MatchRoomState::PlayerLeft(_) | MatchRoomState::WaitingForRematch(_) => {
+                self.check_timout();
+            }
+            MatchRoomState::TimeOut => {}
+        };
+        self.state
+    }
+}
+
+#[derive(Serialize)]
+pub struct MatchInfo {
+    pub room: RoomId,
+    pub game_history: Vec<Move>,
+    pub player_blue: PlayerState,
+    pub player_green: PlayerState,
+    pub viewers: Vec<UserId>,
 }

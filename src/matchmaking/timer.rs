@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+#[derive(Copy, Clone)]
 pub struct CountdownTimer {
     total_duration: Duration,
     start_time: Option<Instant>,

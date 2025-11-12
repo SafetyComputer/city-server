@@ -7,13 +7,12 @@ use std::{
 use actix_web::web;
 
 use rand::Rng;
-use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     data::Dbpool,
     game::{Move, Winner},
-    matchmaking::matchroom::{Color, MatchRoom, MatchRoomState, PlayerState},
+    matchmaking::matchroom::{Color, MatchInfo, MatchRoom, MatchRoomState},
 };
 
 use super::handler::ServerMessage;
@@ -29,7 +28,6 @@ pub enum BackgroundTask {
     MatchPlayers,
     CheckConnections,
     CheckMatches,
-    CheckTimer,
 }
 
 struct Sessions {
@@ -73,15 +71,6 @@ impl Sessions {
             self.inner.remove(&conn_id);
         }
     }
-}
-
-#[derive(Serialize)]
-pub struct MatchInfo {
-    pub room: RoomId,
-    pub game_history: Vec<Move>,
-    pub player_blue: PlayerState,
-    pub player_green: PlayerState,
-    pub viewers: Vec<UserId>,
 }
 
 enum Command {
@@ -201,14 +190,7 @@ impl MatchServer {
 
     fn get_match_info(&self, room_id: RoomId) -> Option<MatchInfo> {
         if let Some(room) = self.matches.get(&room_id) {
-            let game_history = room.game.history.clone();
-            let info = MatchInfo {
-                room: room_id,
-                game_history,
-                player_blue: room.players.blue,
-                player_green: room.players.green,
-                viewers: room.viewers.iter().copied().collect(),
-            };
+            let info = room.get_info(room_id);
             Some(info)
         } else {
             None
@@ -221,7 +203,7 @@ impl MatchServer {
                 return;
             }
             let msg = serde_json::to_string(&msg).unwrap();
-            for uuid in &room.viewers {
+            for uuid in room.get_viewers() {
                 if let Some(sessions) = self.sessions.get(uuid) {
                     sessions.send(msg.clone());
                 }
@@ -232,7 +214,7 @@ impl MatchServer {
     fn broadcast_message(&self, room: RoomId, msg: &ServerMessage) {
         if let Some(room) = self.matches.get(&room) {
             let msg = serde_json::to_string(msg).unwrap();
-            for uuid in &room.viewers {
+            for uuid in room.get_viewers() {
                 if let Some(sessions) = self.sessions.get(uuid) {
                     sessions.send(msg.clone());
                 }
@@ -402,8 +384,8 @@ impl MatchServer {
             self.send_message_in_room(room_id, uuid, &msg);
         }
 
-        if let MatchRoomState::Ended(winner) = room.state {
-            let msg = ServerMessage::end_message(room_id, Some(winner));
+        if let MatchRoomState::Ended(winner) = room.get_state() {
+            let msg = ServerMessage::end_message(room_id, Some(*winner));
             self.send_message_in_room(room_id, uuid, &msg);
         }
 
@@ -431,8 +413,8 @@ impl MatchServer {
             self.send_message_in_room(room_id, uuid, &msg);
         }
 
-        if let MatchRoomState::Ended(winner) = room.state {
-            let msg = ServerMessage::end_message(room_id, Some(winner));
+        if let MatchRoomState::Ended(winner) = room.get_state() {
+            let msg = ServerMessage::end_message(room_id, Some(*winner));
             self.send_message_in_room(room_id, uuid, &msg);
         }
 
@@ -575,7 +557,6 @@ impl MatchServer {
                         BackgroundTask::MatchPlayers => self.try_match_players(),
                         BackgroundTask::CheckConnections => self.check_connections(),
                         BackgroundTask::CheckMatches => self.check_matches(),
-                        BackgroundTask::CheckTimer => self.check_timer()
                     }
                 }
             }
@@ -623,66 +604,28 @@ impl MatchServer {
     }
 
     fn check_matches(&mut self) {
-        let timeout_rooms: Vec<RoomId> = self
-            .matches
-            .iter_mut()
-            .filter_map(
-                |(id, room)| {
-                    if room.check_timout() { Some(*id) } else { None }
-                },
-            )
-            .collect();
-
-        for room_id in timeout_rooms {
-            let msg = ServerMessage::end_message(room_id, None);
-            self.broadcast_message(room_id, &msg);
-            self.matches.remove(&room_id);
-        }
-
-        let ended_rooms: Vec<RoomId> = self
-            .matches
-            .iter()
-            .filter_map(|(id, room)| {
-                if let MatchRoomState::Ended(_) = room.state {
-                    Some(*id)
-                } else {
-                    None
+        let mut timout_rooms= Vec::new();
+        let mut messages = Vec::new();
+        for (room_id, room) in self.matches.iter_mut() {
+            let msg = match room.check_self(&self.db) {
+                MatchRoomState::Ended(winner) => {
+                    ServerMessage::end_message(*room_id, Some(winner))
                 }
-            })
-            .collect();
-
-        for room_id in ended_rooms {
-            let room = self.matches.remove(&room_id);
-            if let Some(room) = room {
-                let _ = room.save(self.db.clone());
-            }
-        }
-    }
-
-    fn check_timer(&mut self) {
-        let timout_matches: Vec<(RoomId, Color)> = self
-            .matches
-            .iter_mut()
-            .filter_map(|(room_id, room)| {
-                let color = room.check_player_timout();
-                if let MatchRoomState::Ended(_) = room.state {
-                    return None;
-                };
-                match color {
-                    None => None,
-                    Some(Color::Blue) => Some((*room_id, Color::Blue)),
-                    Some(Color::Green) => Some((*room_id, Color::Green)),
+                MatchRoomState::TimeOut => {
+                    timout_rooms.push(*room_id);
+                    ServerMessage::end_message(*room_id, None)
                 }
-            })
-            .collect();
-
-        for (room, timeout_player) in timout_matches {
-            let msg = match timeout_player {
-                Color::Blue => ServerMessage::end_message(room, Some(Winner::Green)),
-                Color::Green => ServerMessage::end_message(room, Some(Winner::Blue)),
+                _ => { continue; }
             };
+            messages.push((*room_id, msg));
+        }
 
+        for (room, msg) in messages {
             self.broadcast_message(room, &msg);
+        }
+
+        for room in timout_rooms {
+            self.matches.remove(&room);
         }
     }
 }

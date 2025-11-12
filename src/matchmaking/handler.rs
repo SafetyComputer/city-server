@@ -10,7 +10,8 @@ use tokio::{sync::mpsc, time::interval};
 
 use crate::{
     game::{Move, Winner},
-    matchmaking::service::{MatchInfo, MatchServerHandle, RoomId, UserId},
+    matchmaking::service::{MatchServerHandle, RoomId, UserId},
+    matchmaking::matchroom::MatchInfo
 };
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);

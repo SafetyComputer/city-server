@@ -54,7 +54,7 @@ fn get_tls_config(tls_path: String) -> ServerConfig {
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("./migrations");
 
-#[actix_rt::main]
+#[tokio::main]
 async fn main() -> std::io::Result<()> {
     dotenv().ok();
     let database_url = env::var("DATABASE_URL").unwrap();
@@ -73,8 +73,6 @@ async fn main() -> std::io::Result<()> {
         let mut check_connection_interval =
             tokio::time::interval(core::time::Duration::from_secs(300));
         let mut check_matches_interval = tokio::time::interval(core::time::Duration::from_secs(30));
-        let mut check_timer_interval =
-            tokio::time::interval(core::time::Duration::from_millis(100));
         loop {
             let result = tokio::select! {
                 _ = match_interval.tick() => {
@@ -87,10 +85,6 @@ async fn main() -> std::io::Result<()> {
 
                 _ = check_matches_interval.tick() => {
                     background_tx.schedule_background_task(BackgroundTask::CheckMatches)
-                }
-
-                _ = check_timer_interval.tick() => {
-                    background_tx.schedule_background_task(BackgroundTask::CheckTimer)
                 }
             };
             if result.is_err() {
