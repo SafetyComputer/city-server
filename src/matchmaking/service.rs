@@ -142,6 +142,12 @@ enum Command {
         res_tx: oneshot::Sender<()>,
     },
 
+    Rematch {
+        room: RoomId,
+        uuid: UserId,
+        res_tx: oneshot::Sender<bool>,
+    },
+
     GetMatchRoomById {
         room: RoomId,
         res_tx: oneshot::Sender<Option<MatchInfo>>,
@@ -530,6 +536,11 @@ impl MatchServer {
                             let _ = res_tx.send(());
                         },
 
+                        Command::Rematch{room, uuid, res_tx} => {
+                            let result = self.rematch(room, uuid);
+                            let _ = res_tx.send(result);
+                        },
+
                         Command::GetMatchRoomById{ room, res_tx } => {
                             let result = self.get_match_info(room);
                             let _ = res_tx.send(result);
@@ -596,11 +607,19 @@ impl MatchServer {
         let mut timout_rooms = Vec::new();
         let mut messages = Vec::new();
         for (room_id, room) in self.matches.iter_mut() {
+            let is_waiting = matches!(room.get_state(), MatchRoomState::WaitingForRematch(_));
             let msg = match room.check_self(&self.db) {
                 MatchRoomState::Ended(winner) => ServerMessage::end_message(*room_id, Some(winner)),
                 MatchRoomState::TimeOut => {
                     timout_rooms.push(*room_id);
                     ServerMessage::end_message(*room_id, None)
+                }
+                MatchRoomState::Ready => {
+                    if is_waiting {
+                        ServerMessage::match_message(&room.get_info(*room_id), *room_id)
+                    } else {
+                        continue;
+                    }
                 }
                 _ => {
                     continue;
@@ -730,6 +749,14 @@ impl MatchServerHandle {
         let (res_tx, res_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::LeaveMatchRoom { room, uuid, res_tx })
+            .unwrap();
+        res_rx.await.unwrap()
+    }
+
+    pub async fn rematch(&self, room: RoomId, uuid: UserId) -> bool {
+        let (res_tx, res_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::Rematch { room, uuid, res_tx })
             .unwrap();
         res_rx.await.unwrap()
     }

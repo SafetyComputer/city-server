@@ -49,6 +49,7 @@ impl PlayerState {
             Self::Ready(id) | Self::Left(id) | Self::WaitingForRematch(id) => Some(*id),
         }
     }
+
     pub fn is_ready(&self) -> bool {
         matches!(self, Self::Ready(_))
     }
@@ -86,6 +87,18 @@ impl Players {
             return true;
         }
         false
+    }
+
+    fn rematch(&mut self) -> bool {
+        if let PlayerState::WaitingForRematch(blue_id) = self.blue
+            && let PlayerState::WaitingForRematch(green_id) = self.green
+        {
+            self.blue = PlayerState::Ready(blue_id);
+            self.green = PlayerState::Ready(green_id);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -228,14 +241,13 @@ impl MatchRoom {
     }
 
     pub fn join_rematch(&mut self, id: UserId) -> bool {
-        if let Some(color) = self.players.get_color(id) {
+        if let MatchRoomState::WaitingForRematch(_) = self.state
+            && let Some(color) = self.players.get_color(id)
+        {
             match color {
                 Color::Blue => self.players.blue = PlayerState::WaitingForRematch(id),
                 Color::Green => self.players.green = PlayerState::WaitingForRematch(id),
             }
-            let mut timer = CountdownTimer::new(Duration::from_secs(60 * 3));
-            timer.start();
-            self.state = MatchRoomState::WaitingForRematch(timer);
             true
         } else {
             false
@@ -258,10 +270,6 @@ impl MatchRoom {
 
     pub fn contains(&self, id: UserId) -> bool {
         self.viewers.contains(&id)
-    }
-
-    pub fn is_ready(&self) -> bool {
-        matches!(self.state, MatchRoomState::Ready)
     }
 
     pub fn save(&self, db: &Dbpool) -> Result<(), diesel::result::Error> {
@@ -430,8 +438,15 @@ impl MatchRoom {
                 timer.start();
                 self.state = MatchRoomState::WaitingForRematch(timer)
             }
-            MatchRoomState::PlayerLeft(_) | MatchRoomState::WaitingForRematch(_) => {
+            MatchRoomState::PlayerLeft(_) => {
                 self.check_timout();
+            }
+            MatchRoomState::WaitingForRematch(_) => {
+                if self.players.rematch() {
+                    self.state = MatchRoomState::Ready;
+                } else {
+                    self.check_timout();
+                }
             }
             MatchRoomState::TimeOut => {}
         };

@@ -199,3 +199,26 @@ async fn reconnect(
         Err(e) => e,
     }
 }
+
+#[get("/room/rematch")]
+async fn get_rematch(
+    identity: Identity,
+    db: Data<Dbpool>,
+    handle: Data<MatchServerHandle>,
+    room_info: Json<RoomQuery>,
+) -> impl Responder {
+    let user = identity_to_user(identity, db).await;
+    match user {
+        Ok(user) => {
+            let result = handle
+                .rematch(room_info.room_id.unwrap(), user.id.unwrap())
+                .await;
+            if result {
+                HttpResponse::Ok().json("success")
+            } else {
+                HttpResponse::BadRequest().json("failed to rematch")
+            }
+        }
+        Err(e) => e,
+    }
+}
