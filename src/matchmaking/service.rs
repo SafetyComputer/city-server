@@ -23,13 +23,6 @@ pub type RoomId = u32;
 
 pub type UserId = i32;
 
-#[derive(Clone, Copy)]
-pub enum BackgroundTask {
-    MatchPlayers,
-    CheckConnections,
-    CheckMatches,
-}
-
 struct Sessions {
     inner: HashMap<ConnId, mpsc::UnboundedSender<String>>,
 }
@@ -165,14 +158,12 @@ pub struct MatchServer {
     waitings: HashSet<UserId>,
     db: web::Data<Dbpool>,
     cmd_rx: mpsc::UnboundedReceiver<Command>,
-    task_rx: mpsc::UnboundedReceiver<BackgroundTask>,
 }
 
 impl MatchServer {
     pub fn new(db: web::Data<Dbpool>) -> (Self, MatchServerHandle) {
         let matches = HashMap::with_capacity(4);
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-        let (task_tx, task_rx) = mpsc::unbounded_channel();
 
         (
             Self {
@@ -181,9 +172,8 @@ impl MatchServer {
                 waitings: HashSet::new(),
                 db,
                 cmd_rx,
-                task_rx,
             },
-            MatchServerHandle { cmd_tx, task_tx },
+            MatchServerHandle { cmd_tx },
         )
     }
 
@@ -467,6 +457,10 @@ impl MatchServer {
     }
 
     pub async fn run(mut self) -> io::Result<()> {
+        let mut match_interval = tokio::time::interval(core::time::Duration::from_secs(1));
+        let mut check_connection_interval =
+            tokio::time::interval(core::time::Duration::from_secs(300));
+        let mut check_matches_interval = tokio::time::interval(core::time::Duration::from_secs(30));
         loop {
             tokio::select! {
                 Some(cmd) = self.cmd_rx.recv() => {
@@ -553,12 +547,16 @@ impl MatchServer {
                     }
                 }
 
-                Some(task) = self.task_rx.recv() => {
-                    match task {
-                        BackgroundTask::MatchPlayers => self.try_match_players(),
-                        BackgroundTask::CheckConnections => self.check_connections(),
-                        BackgroundTask::CheckMatches => self.check_matches(),
-                    }
+                _ = match_interval.tick() => {
+                    self.try_match_players();
+                }
+
+                _ = check_connection_interval.tick() => {
+                    self.check_connections();
+                }
+
+                _ = check_matches_interval.tick() => {
+                    self.check_matches();
                 }
             }
         }
@@ -641,7 +639,6 @@ impl MatchServer {
 #[derive(Clone)]
 pub struct MatchServerHandle {
     cmd_tx: mpsc::UnboundedSender<Command>,
-    task_tx: mpsc::UnboundedSender<BackgroundTask>,
 }
 
 impl MatchServerHandle {
@@ -775,12 +772,5 @@ impl MatchServerHandle {
             .send(Command::Reconnect { uuid, res_tx })
             .unwrap();
         res_rx.await.unwrap()
-    }
-
-    pub fn schedule_background_task(
-        &self,
-        task: BackgroundTask,
-    ) -> Result<(), tokio::sync::mpsc::error::SendError<BackgroundTask>> {
-        self.task_tx.send(task)
     }
 }

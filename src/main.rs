@@ -1,10 +1,9 @@
-use std::{env, io};
+use std::env;
 
 use actix_cors::Cors;
 use actix_identity::IdentityMiddleware;
 use actix_session::{SessionMiddleware, config::PersistentSession, storage::CookieSessionStore};
 use actix_web::{App, HttpServer, cookie::Key};
-use city_server::matchmaking::service::BackgroundTask;
 use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use dotenvy::dotenv;
 use futures_util::try_join;
@@ -66,36 +65,7 @@ async fn main() -> std::io::Result<()> {
     let key = get_secret_key(&key_raw);
 
     let (match_server, server_tx) = MatchServer::new(actix_web::web::Data::new(pool.clone()));
-    let background_tx = server_tx.clone();
     let match_server = tokio::task::spawn(match_server.run());
-    let match_server_background = tokio::task::spawn(async move {
-        let mut match_interval = tokio::time::interval(core::time::Duration::from_secs(1));
-        let mut check_connection_interval =
-            tokio::time::interval(core::time::Duration::from_secs(300));
-        let mut check_matches_interval = tokio::time::interval(core::time::Duration::from_secs(30));
-        loop {
-            let result = tokio::select! {
-                _ = match_interval.tick() => {
-                    background_tx.schedule_background_task(BackgroundTask::MatchPlayers)
-                }
-
-                _ = check_connection_interval.tick() => {
-                    background_tx.schedule_background_task(BackgroundTask::CheckConnections)
-                }
-
-                _ = check_matches_interval.tick() => {
-                    background_tx.schedule_background_task(BackgroundTask::CheckMatches)
-                }
-            };
-            if result.is_err() {
-                break;
-            }
-        }
-        io::Result::<()>::Err(io::Error::new(
-            io::ErrorKind::AddrNotAvailable,
-            "closed connection",
-        ))
-    });
 
     let tls_path = env::var("TLS_PATH").unwrap();
     let tls_config = get_tls_config(tls_path);
@@ -133,14 +103,11 @@ async fn main() -> std::io::Result<()> {
             .service(web::reconnect)
             .service(web::post_matching)
             .service(web::delete_matching)
+            .service(web::get_rematch)
     })
     .bind_rustls_0_23("0.0.0.0:8088", tls_config)?
     //.bind("0.0.0.0:8088")?
     .run();
-    try_join!(
-        http_server,
-        async move { match_server.await.unwrap() },
-        async move { match_server_background.await.unwrap() }
-    )?;
+    try_join!(http_server, async move { match_server.await.unwrap() },)?;
     Ok(())
 }
