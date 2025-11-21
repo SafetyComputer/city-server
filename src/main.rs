@@ -10,7 +10,6 @@ use futures_util::try_join;
 
 use city_server::matchmaking::MatchServer;
 use city_server::web;
-use rustls::ServerConfig;
 
 fn get_secret_key(key_raw: &String) -> Key {
     let key_chars = key_raw.as_bytes();
@@ -20,35 +19,6 @@ fn get_secret_key(key_raw: &String) -> Key {
         key[i] = key_chars[i % length];
     }
     Key::from(&key)
-}
-
-fn get_tls_config(tls_path: String) -> ServerConfig {
-    rustls::crypto::aws_lc_rs::default_provider()
-        .install_default()
-        .unwrap();
-
-    let mut certs_file =
-        std::io::BufReader::new(std::fs::File::open(tls_path.clone() + "/cert.pem").unwrap());
-    let mut key_file =
-        std::io::BufReader::new(std::fs::File::open(tls_path.clone() + "/key.pem").unwrap());
-
-    // load TLS certs and key
-    // to create a self-signed temporary cert for testing:
-    // `openssl req -x509 -newkey rsa:4096 -nodes -keyout key.pem -out cert.pem -days 365 -subj '/CN=localhost'`
-    let tls_certs = rustls_pemfile::certs(&mut certs_file)
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    let tls_key = rustls_pemfile::pkcs8_private_keys(&mut key_file)
-        .next()
-        .unwrap()
-        .unwrap();
-
-    // set up TLS config options
-
-    rustls::ServerConfig::builder()
-        .with_no_client_auth()
-        .with_single_cert(tls_certs, rustls::pki_types::PrivateKeyDer::Pkcs8(tls_key))
-        .unwrap()
 }
 
 const MIGRATIONS: EmbeddedMigrations = embed_migrations!("./migrations");
@@ -67,9 +37,6 @@ async fn main() -> std::io::Result<()> {
     let (match_server, server_tx) = MatchServer::new(actix_web::web::Data::new(pool.clone()));
     let match_server = tokio::task::spawn(match_server.run());
 
-    let tls_path = env::var("TLS_PATH").unwrap();
-    let tls_config = get_tls_config(tls_path);
-
     let http_server = HttpServer::new(move || {
         App::new()
             .app_data(actix_web::web::Data::new(pool.clone()))
@@ -86,7 +53,15 @@ async fn main() -> std::io::Result<()> {
                     )
                     .build(),
             )
-            .wrap(Cors::permissive())
+            .wrap(
+                Cors::default()
+                    .allowed_origin_fn(|_origin, _req_head| true)
+                    .allow_any_method()
+                    .allow_any_header()
+                    .expose_headers(vec![actix_web::http::header::SET_COOKIE])
+                    .supports_credentials()
+                    .max_age(3600),
+            )
             .service(web::login)
             .service(web::logout)
             .service(web::post_user)
@@ -105,8 +80,7 @@ async fn main() -> std::io::Result<()> {
             .service(web::delete_matching)
             .service(web::get_rematch)
     })
-    .bind_rustls_0_23("0.0.0.0:8088", tls_config)?
-    //.bind("0.0.0.0:8088")?
+    .bind("0.0.0.0:8088")?
     .run();
     try_join!(http_server, async move { match_server.await.unwrap() },)?;
     Ok(())
